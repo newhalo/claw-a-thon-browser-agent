@@ -199,8 +199,30 @@ export default async function chatRoute(req, res) {
       streamOpts.tools = tools;
     }
 
-    const result = streamText(streamOpts);
-    await result.pipeDataStreamToResponse(res);
+    const result = streamText({
+      ...streamOpts,
+      onError: ({ error }) => {
+        const status = error?.statusCode ?? error?.status;
+        const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'] || error?.responseHeaders?.['retry-after'];
+        if (status === 429) {
+          const wait = retryAfter ? ` (reset in ${Math.ceil(retryAfter / 60)} min)` : '';
+          console.warn(`[chat] Rate limit hit${wait}`);
+        } else {
+          console.error('[chat] streamText error:', error?.message || error);
+        }
+      },
+    });
+    await result.pipeDataStreamToResponse(res, {
+      getErrorMessage: (error) => {
+        const status = error?.statusCode ?? error?.status;
+        if (status === 429) {
+          const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'];
+          const wait = retryAfter ? ` Thử lại sau ${Math.ceil(retryAfter / 60)} phút.` : '';
+          return `⚠️ Rate limit: API quota đã hết.${wait}`;
+        }
+        return `⚠️ Lỗi: ${error?.message || 'Unknown error'}`;
+      },
+    });
   } catch (err) {
     const isRateLimit = err.message?.includes('Too Many Requests') || err.statusCode === 429 || err.status === 429;
     console.error(`[chat] Stream error${isRateLimit ? ' (rate limit)' : ''}:`, err.message || err);
