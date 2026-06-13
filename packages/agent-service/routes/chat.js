@@ -187,6 +187,9 @@ export default async function chatRoute(req, res) {
       system: systemPrompt,
       messages: allMessages,
       maxSteps: (hasTools && toolsOk) ? 10 : 1,
+      // Disable built-in retries — 429s retry immediately with no backoff, making things worse.
+      // The client should handle retry/backoff at a higher level.
+      maxRetries: 0,
       onFinish: ({ response }) => {
         appendMessages(conversationId, [...messages, ...response.messages]);
       },
@@ -199,11 +202,18 @@ export default async function chatRoute(req, res) {
     const result = streamText(streamOpts);
     await result.pipeDataStreamToResponse(res);
   } catch (err) {
-    console.error('[chat] Stream error:', err.message || err);
+    const isRateLimit = err.message?.includes('Too Many Requests') || err.statusCode === 429 || err.status === 429;
+    console.error(`[chat] Stream error${isRateLimit ? ' (rate limit)' : ''}:`, err.message || err);
     if (!res.headersSent) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     } else if (!res.writableEnded) {
+      // Stream already started — send error chunk so client shows the message
+      const isRateLimit2 = err.message?.includes('Too Many Requests') || err.statusCode === 429;
+      const msg = isRateLimit2
+        ? 'Rate limit exceeded. Please wait a moment and try again.'
+        : (err.message || 'An error occurred');
+      res.write(`3:${JSON.stringify(msg)}\n`);
       res.end();
     }
   }
