@@ -1,10 +1,34 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import ToolsPopover from '../components/ToolsPopover';
-import { getAgentServiceConfig, checkAgentServiceHealth } from '../lib/agentServiceClient';
+import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService } from '../lib/agentServiceClient';
 import { useChatStore, type ChatMessage, type ToolInvocation } from '../lib/chatStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Re-push saved provider + native config to agent-service after a restart */
+async function repushProviderConfig(agentServiceUrl: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(['agentProviderConfig', 'agentNativeConfig'], async (result) => {
+      try {
+        // Re-push native config
+        chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async (response) => {
+          const cfg = response?.config;
+          if (cfg?.nativeServerUrl) {
+            await pushNativeConfigToAgentService(agentServiceUrl, cfg.nativeServerUrl, cfg.authToken);
+          }
+        });
+        // Re-push provider config
+        const saved = result.agentProviderConfig;
+        if (!saved?.provider || !saved?.apiKey) { resolve(false); return; }
+        const ok = await pushProviderConfig(agentServiceUrl, saved.provider, saved.apiKey, saved.model, saved.baseUrl);
+        resolve(ok);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
 
 /** Strip browser_ / website_tool_{domain}_tab{n}_ prefixes for display */
 function shortToolName(name: string): string {
@@ -215,12 +239,28 @@ export default function ChatView({ onOpenSettings }: Props) {
     historyForRequest.push({ role: 'user', content: text });
 
     try {
-      const res = await fetch(`${serviceUrl}/chat`, {
+      let res = await fetch(`${serviceUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: historyForRequest, conversationId }),
         signal: abortRef.current.signal,
       });
+
+      // Service restarted and lost provider config — re-push from storage and retry once
+      if (res.status === 503) {
+        const body = await res.json().catch(() => ({}));
+        if (body.error === 'provider_not_configured') {
+          const repushed = await repushProviderConfig(serviceUrl);
+          if (repushed) {
+            res = await fetch(`${serviceUrl}/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ messages: historyForRequest, conversationId }),
+              signal: abortRef.current?.signal,
+            });
+          }
+        }
+      }
 
       if (!res.ok || !res.body) throw new Error(`Server error: ${res.status}`);
 

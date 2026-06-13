@@ -143,34 +143,38 @@ export default async function chatRoute(req, res) {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  const hasTools = Object.keys(tools).length > 0;
-
-  const streamOpts = {
-    model: getModel(),
-    system: SYSTEM_PROMPT,
-    messages: allMessages,
-    maxSteps: hasTools ? 10 : 1,
-    onFinish: ({ response }) => {
-      appendMessages(conversationId, [...messages, ...response.messages]);
-    },
-  };
-
-  // Only pass tools if the provider supports function calling.
-  // openai-compat providers (e.g. VNGCloud gemma) may not — omit tools to avoid
-  // InvalidResponseDataError when the model returns malformed tool_call chunks.
-  const { provider: providerName } = getProviderStatus();
-  if (hasTools && providerName !== 'openai-compat') {
-    streamOpts.tools = tools;
-  }
-
   try {
+    const { provider: providerName, configured } = getProviderStatus();
+    if (!configured) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'provider_not_configured' }));
+      return;
+    }
+
+    const hasTools = Object.keys(tools).length > 0;
+    const streamOpts = {
+      model: getModel(),
+      system: SYSTEM_PROMPT,
+      messages: allMessages,
+      maxSteps: hasTools ? 10 : 1,
+      onFinish: ({ response }) => {
+        appendMessages(conversationId, [...messages, ...response.messages]);
+      },
+    };
+
+    // openai-compat providers (e.g. VNGCloud gemma) may not support function calling —
+    // omit tools to avoid InvalidResponseDataError on malformed tool_call chunks.
+    if (hasTools && providerName !== 'openai-compat') {
+      streamOpts.tools = tools;
+    }
+
     const result = streamText(streamOpts);
-    // Must await — errors during streaming otherwise become unhandled rejections
     await result.pipeDataStreamToResponse(res);
   } catch (err) {
     console.error('[chat] Stream error:', err.message || err);
     if (!res.headersSent) {
-      res.writeHead(500).end('Internal server error');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
     } else if (!res.writableEnded) {
       res.end();
     }
