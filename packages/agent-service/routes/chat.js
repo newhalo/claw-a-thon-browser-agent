@@ -140,13 +140,10 @@ export default async function chatRoute(req, res) {
     ? [...history, ...messages]
     : messages;
 
-  // Stream response
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Conversation-Id': conversationId,
-  });
+  // Set headers before streaming — pipeDataStreamToResponse will call writeHead itself
+  res.setHeader('X-Conversation-Id', conversationId);
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
 
   try {
     const result = streamText({
@@ -154,14 +151,13 @@ export default async function chatRoute(req, res) {
       system: SYSTEM_PROMPT,
       messages: allMessages,
       tools,
-      maxSteps: 10,   // allow multi-step tool use
+      maxSteps: 10,
       onFinish: ({ response }) => {
-        // Persist to short-term memory
         appendMessages(conversationId, [...messages, ...response.messages]);
       },
     });
 
-    // Pipe Vercel AI SDK stream to response
+    // pipeDataStreamToResponse sets Content-Type and calls writeHead internally
     result.pipeDataStreamToResponse(res);
   } catch (err) {
     console.error('[chat] Stream error:', err);
