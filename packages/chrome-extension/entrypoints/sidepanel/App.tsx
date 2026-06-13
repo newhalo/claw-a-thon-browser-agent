@@ -1,70 +1,64 @@
 import React, { useEffect, useState } from 'react';
+import ChatView from './views/ChatView';
 import Settings from './components/Settings';
-import ToolsPanel from './components/ToolsPanel';
 import TokensPanel from './components/TokensPanel';
 import './App.css';
 
-type Page = 'settings' | 'tools' | 'tokens';
+type Page = 'chat' | 'settings' | 'tokens';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('settings');
+  const [currentPage, setCurrentPage] = useState<Page>('chat');
   const [isConfigured, setIsConfigured] = useState(false);
 
   useEffect(() => {
-    checkConfiguration();
-  }, []);
-
-  const checkConfiguration = async () => {
     chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (response) => {
-      if (response?.config?.nativeServerUrl && response?.config?.authToken) {
-        setIsConfigured(true);
-        setCurrentPage('tools');
-      } else {
-        setIsConfigured(false);
-        setCurrentPage('settings');
-      }
+      const configured = !!(response?.config?.nativeServerUrl && response?.config?.authToken);
+      setIsConfigured(configured);
+      if (!configured) setCurrentPage('settings');
     });
-  };
+  }, []);
 
   const handleConfigSaved = () => {
     setIsConfigured(true);
-    setCurrentPage('tools');
+    setCurrentPage('chat');
   };
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <h1>🤖 Claw-a-thon MCP</h1>
-        <nav className="app-nav">
+    <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      <header className="app-header" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px' }}>
+        <h1 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>🤖 Browser Agent</h1>
+        <nav className="app-nav" style={{ display: 'flex', gap: 4 }}>
           <button
-            className={`nav-btn ${currentPage === 'tools' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('tools')}
-            disabled={!isConfigured}
+            className={`nav-btn ${currentPage === 'chat' ? 'active' : ''}`}
+            onClick={() => setCurrentPage('chat')}
+            title="Chat"
           >
-            Tools
+            💬
           </button>
           <button
             className={`nav-btn ${currentPage === 'tokens' ? 'active' : ''}`}
             onClick={() => setCurrentPage('tokens')}
             disabled={!isConfigured}
+            title="Tokens"
           >
-            Tokens
+            🔑
           </button>
           <button
             className={`nav-btn ${currentPage === 'settings' ? 'active' : ''}`}
             onClick={() => setCurrentPage('settings')}
+            title="Settings"
           >
-            ⚙️ Settings
+            ⚙️
           </button>
         </nav>
       </header>
 
-      <main className="app-content">
+      <main className="app-content" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        {currentPage === 'chat' && (
+          <ChatView onOpenSettings={() => setCurrentPage('settings')} />
+        )}
         {currentPage === 'settings' && (
           <Settings onConfigSaved={handleConfigSaved} />
-        )}
-        {currentPage === 'tools' && isConfigured && (
-          <ToolsPanel />
         )}
         {currentPage === 'tokens' && isConfigured && (
           <TokensPanel />

@@ -31,6 +31,8 @@ export default defineConfig({
     host_permissions: [
       'http://*/*',
       'https://*/*',
+      'http://localhost/*',
+      'http://127.0.0.1/*',
     ],
     background: {
       service_worker: 'entrypoints/background/index.ts',

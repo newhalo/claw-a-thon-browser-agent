@@ -319,7 +319,7 @@ function GroupCard({ group, onToggle }: { group: ToolGroup; onToggle: (name: str
 
 // ─── Main panel ───────────────────────────────────────────────────────────────
 
-function ToolsPanel() {
+function ToolsPanel({ compact = false }: { compact?: boolean }) {
   const [groups, setGroups] = useState<ToolGroup[]>([]);
   const [totalTools, setTotalTools] = useState(0);
   const [providerRunning, setProviderRunning] = useState(false);

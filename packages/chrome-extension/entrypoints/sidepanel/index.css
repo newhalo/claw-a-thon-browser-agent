@@ -7,6 +7,12 @@
   --border: #e5e7eb;
   --text: #1f2937;
   --text-secondary: #6b7280;
+
+  /* Chat UI aliases */
+  --bg-primary: #ffffff;
+  --bg-secondary: #f9fafb;
+  --text-primary: #1f2937;
+  --accent: #2563eb;
 }
 
 * {
