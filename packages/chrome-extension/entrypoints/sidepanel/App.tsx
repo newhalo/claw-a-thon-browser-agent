@@ -9,6 +9,7 @@ import {
   checkAgentServiceHealthFull,
   pushNativeConfigToAgentService,
   pushProviderConfig,
+  pushSystemPrompt,
 } from './lib/agentServiceClient';
 import './App.css';
 
@@ -64,6 +65,11 @@ function App() {
       if (alive) {
         // Push native config first
         await pushNativeConfigToAgentService(url, cfg.nativeServerUrl!, cfg.authToken!);
+
+        // Restore custom system prompt
+        chrome.storage.sync.get(['agentCustomSystemPrompt'], (r) => {
+          if (r.agentCustomSystemPrompt) pushSystemPrompt(url, r.agentCustomSystemPrompt);
+        });
 
         if (!health.provider?.configured) {
           // Try restoring saved provider config

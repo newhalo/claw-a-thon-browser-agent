@@ -68,6 +68,20 @@ export async function pushProviderConfig(
   }
 }
 
+export async function pushSystemPrompt(agentServiceUrl: string, systemPrompt: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/system-prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ systemPrompt }),
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export async function pushNativeConfigToAgentService(
   agentServiceUrl: string,
   nativeServerUrl: string,

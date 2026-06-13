@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAgentServiceConfig, checkAgentServiceHealthFull, pushProviderConfig, pushNativeConfigToAgentService } from '../lib/agentServiceClient';
+import { getAgentServiceConfig, checkAgentServiceHealthFull, pushProviderConfig, pushNativeConfigToAgentService, pushSystemPrompt } from '../lib/agentServiceClient';
 
 type Provider = 'anthropic' | 'openai' | 'openai-compat';
 
@@ -13,6 +13,11 @@ function Settings({ onConfigSaved }: SettingsProps) {
   const [token, setToken] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Custom system prompt
+  const [customPrompt, setCustomPrompt] = useState('');
+  const [promptSaving, setPromptSaving] = useState(false);
+  const [promptMsg, setPromptMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Provider config
   const [showProviderForm, setShowProviderForm] = useState(false);
@@ -29,6 +34,7 @@ function Settings({ onConfigSaved }: SettingsProps) {
     loadConfig();
     loadProviderStatus();
     loadSavedProviderConfig();
+    loadSavedCustomPrompt();
   }, []);
 
   const loadConfig = () => {
@@ -44,6 +50,27 @@ function Settings({ onConfigSaved }: SettingsProps) {
     const { url: agentUrl } = await getAgentServiceConfig();
     const health = await checkAgentServiceHealthFull(agentUrl);
     if (health?.provider) setProviderStatus(health.provider);
+  };
+
+  const loadSavedCustomPrompt = () => {
+    chrome.storage.sync.get(['agentCustomSystemPrompt'], (result) => {
+      setCustomPrompt(result.agentCustomSystemPrompt || '');
+    });
+  };
+
+  const handleSaveCustomPrompt = async () => {
+    setPromptMsg(null);
+    setPromptSaving(true);
+    try {
+      const { url: agentUrl } = await getAgentServiceConfig();
+      await pushSystemPrompt(agentUrl, customPrompt.trim());
+      chrome.storage.sync.set({ agentCustomSystemPrompt: customPrompt.trim() });
+      setPromptMsg({ type: 'success', text: '✅ Đã lưu!' });
+    } catch {
+      setPromptMsg({ type: 'error', text: '❌ Lưu thất bại' });
+    } finally {
+      setPromptSaving(false);
+    }
   };
 
   const loadSavedProviderConfig = () => {
@@ -258,6 +285,44 @@ function Settings({ onConfigSaved }: SettingsProps) {
               </div>
             </form>
           )}
+        </div>
+
+        {/* ── Custom System Prompt ──────────────────────────────── */}
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 18 }}>
+          <h2 style={{ marginBottom: 8 }}>Custom Instructions</h2>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.6 }}>
+            Thêm hướng dẫn riêng cho agent — sẽ được append vào system prompt mặc định.
+          </p>
+          <textarea
+            value={customPrompt}
+            onChange={e => setCustomPrompt(e.target.value)}
+            placeholder={'Ví dụ: Luôn trả lời bằng tiếng Việt.\nKhi tóm tắt trang, dùng bullet points.'}
+            rows={5}
+            style={{
+              width: '100%', padding: '8px 10px', borderRadius: 7,
+              border: '1px solid var(--border)', background: 'var(--bg-elevated)',
+              color: 'var(--text-primary)', fontFamily: 'inherit', fontSize: 12,
+              resize: 'vertical', lineHeight: 1.6, boxSizing: 'border-box',
+            }}
+          />
+          {promptMsg && (
+            <div style={{
+              marginTop: 6, padding: '6px 10px', borderRadius: 6, fontSize: 11,
+              background: promptMsg.type === 'error' ? 'rgba(239,68,68,0.07)' : 'rgba(16,185,129,0.07)',
+              border: `1px solid ${promptMsg.type === 'error' ? 'rgba(239,68,68,0.25)' : 'rgba(16,185,129,0.25)'}`,
+              color: promptMsg.type === 'error' ? 'var(--error)' : 'var(--success, #10b981)',
+            }}>{promptMsg.text}</div>
+          )}
+          <div className="button-group" style={{ marginTop: 8 }}>
+            <button type="button" onClick={handleSaveCustomPrompt} disabled={promptSaving}>
+              {promptSaving ? 'Đang lưu…' : '💾 Lưu Instructions'}
+            </button>
+            {customPrompt && (
+              <button type="button" className="btn-secondary" onClick={() => { setCustomPrompt(''); handleSaveCustomPrompt(); }}>
+                Xoá
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="settings-info">

@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { listTools, resetSession, setMcpConfig, getMcpConfig } from './mcp/client.js';
 import { setProviderConfig, getProviderStatus } from './providers/index.js';
+import { setCustomSystemPrompt, getCustomSystemPrompt } from './config.js';
 import chatRoute from './routes/chat.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -88,6 +89,23 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, status: getProviderStatus() }));
     } catch { res.writeHead(400).end('Invalid JSON'); }
+    return;
+  }
+
+  // ── Custom system prompt ─────────────────────────────────────────────────
+  if (url.pathname === '/system-prompt' && req.method === 'POST') {
+    try {
+      const { systemPrompt } = await readBody(req);
+      setCustomSystemPrompt(systemPrompt || null);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, set: !!systemPrompt }));
+    } catch { res.writeHead(400).end('Invalid JSON'); }
+    return;
+  }
+
+  if (url.pathname === '/system-prompt' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ systemPrompt: getCustomSystemPrompt() }));
     return;
   }
 

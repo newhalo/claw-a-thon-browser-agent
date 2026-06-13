@@ -15,6 +15,7 @@ import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { getModel, getProviderStatus, isToolsSupported } from '../providers/index.js';
+import { getCustomSystemPrompt } from '../config.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
 
@@ -25,16 +26,22 @@ const SYSTEM_PROMPT = `You are a browser automation agent with access to browser
 
 ## Tool selection guide
 - User asks about current page content/areas/elements → call browser_get_page_content (format: "text") FIRST, then summarize
-- User asks about current tab URL/title only → call browser_get_active_tab or browser_get_page_info
-- User asks to read, summarize, extract, analyze a page → browser_get_page_content then synthesize
+- Text doesn't reveal the UI element (e.g. a menu item only visible on screen) → take a screenshot with browser_take_screenshot, then describe what you see
+- User asks about current tab URL/title only → browser_get_active_tab or browser_get_page_info
+- Need to discover all interactive elements (buttons, links, nav items) → browser_find_elements with selector "a,button,[role='menuitem'],[role='tab'],nav *"
 - Website-specific tools (name starts with website_tool_) give richer structured data — prefer them over generic browser tools when available for the current site
 - For multi-step tasks: get context first, then act, then confirm result
+
+## When text is not enough
+If page text content doesn't contain the information the user asked about (e.g. a menu or UI element not reflected in text), escalate in this order:
+1. Try browser_get_page_content with format "html" to see hidden/dynamic elements
+2. Try browser_find_elements with a broad CSS selector to discover visible UI
+3. Take a screenshot with browser_take_screenshot to visually inspect the page
 
 ## Capabilities
 - Open, close, and navigate browser tabs
 - Read and interact with webpage content
 - Manage bookmarks, history, and downloads
-- Execute JavaScript on pages
 - Automate repetitive browser tasks
 
 ## Guidelines
@@ -42,7 +49,7 @@ const SYSTEM_PROMPT = `You are a browser automation agent with access to browser
 - Be concise — summarize results, not every intermediate step
 - Confirm before destructive actions (closing tabs, clearing data, form submission)
 - When navigating to a URL the user mentioned, use it exactly as given
-- If a tool fails, explain why and offer an alternative approach
+- If a tool fails, explain why and try the next escalation step
 
 Current date: ${DATE_STR}`;
 
@@ -169,9 +176,15 @@ export default async function chatRoute(req, res) {
     const toolsOk = isToolsSupported();
     const hasTools = Object.keys(tools).length > 0;
 
+    const basePrompt = toolsOk ? SYSTEM_PROMPT : SYSTEM_PROMPT_NO_TOOLS;
+    const customPrompt = getCustomSystemPrompt();
+    const systemPrompt = customPrompt
+      ? `${basePrompt}\n\n## Custom instructions\n${customPrompt}`
+      : basePrompt;
+
     const streamOpts = {
       model: getModel(),
-      system: toolsOk ? SYSTEM_PROMPT : SYSTEM_PROMPT_NO_TOOLS,
+      system: systemPrompt,
       messages: allMessages,
       maxSteps: (hasTools && toolsOk) ? 10 : 1,
       onFinish: ({ response }) => {
