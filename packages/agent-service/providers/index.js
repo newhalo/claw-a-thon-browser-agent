@@ -1,6 +1,50 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 
+/**
+ * Some openai-compat APIs (e.g. VNGCloud Gemini) omit the required `index`
+ * field from streaming tool_call delta chunks. @ai-sdk/openai validates this
+ * strictly and throws AI_TypeValidationError.
+ *
+ * This fetch wrapper intercepts SSE chunks and injects `index: 0` on any
+ * tool_call entry that is missing it, making the stream valid.
+ */
+function patchToolCallIndexFetch(url, init) {
+  return fetch(url, init).then(res => {
+    if (!res.body) return res;
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+
+    const stream = new ReadableStream({
+      async pull(controller) {
+        const { done, value } = await reader.read();
+        if (done) { controller.close(); return; }
+
+        const text = decoder.decode(value, { stream: true });
+        const patched = text.replace(/("tool_calls"\s*:\s*\[)([\s\S]*?)(\])/g, (match) => {
+          // Add index to each tool_call entry that lacks it
+          return match.replace(/"type"\s*:\s*"function"/g, (m, offset, str) => {
+            // Check if there's already an index before this entry
+            const before = str.slice(Math.max(0, offset - 100), offset);
+            if (/"index"\s*:/.test(before)) return m;
+            return '"index":0,"type":"function"';
+          });
+        });
+
+        controller.enqueue(encoder.encode(patched));
+      },
+    });
+
+    return new Response(stream, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
+  });
+}
+
 // Runtime config — can be overridden via setProviderConfig()
 let runtimeConfig = null;
 
@@ -65,7 +109,11 @@ function buildInstance(cfg) {
       if (!cfg.apiKey) throw new Error('API key required for custom provider');
       if (!cfg.baseUrl) throw new Error('Base URL required for custom provider');
       return {
-        provider: createOpenAI({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey }),
+        provider: createOpenAI({
+          baseURL: cfg.baseUrl,
+          apiKey: cfg.apiKey,
+          fetch: cfg.toolsSupported ? patchToolCallIndexFetch : undefined,
+        }),
         modelId: cfg.model || 'gpt-4o',
         name: `Custom (${cfg.baseUrl})`,
       };
