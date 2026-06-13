@@ -444,11 +444,15 @@ export default defineBackground({
           return { success: true };
         }
         case 'browser_take_screenshot': {
-          const activeTab = await getActiveTab();
+          // captureVisibleTab requires <all_urls> when not triggered by user gesture.
+          // Pass windowId only when explicitly specified; otherwise capture current window.
           const inputWin = Number(args.windowId);
-          const windowId = Number.isFinite(inputWin) ? inputWin : activeTab.windowId;
+          const captureArgs: [number | undefined, chrome.tabs.CaptureVisibleTabOptions] = [
+            Number.isFinite(inputWin) ? inputWin : undefined,
+            { format: 'png' },
+          ];
           const dataUrl = await new Promise<string>((res, rej) =>
-            chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (url) =>
+            chrome.tabs.captureVisibleTab(...captureArgs, (url) =>
               chrome.runtime.lastError ? rej(new Error(chrome.runtime.lastError.message)) : res(url!)));
           return { mimeType: 'image/png', dataUrl };
         }

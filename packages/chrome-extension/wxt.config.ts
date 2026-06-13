@@ -29,8 +29,7 @@ export default defineConfig({
       'clipboardWrite',
     ],
     host_permissions: [
-      'http://*/*',
-      'https://*/*',
+      '<all_urls>',
       'http://localhost/*',
       'http://127.0.0.1/*',
     ],
