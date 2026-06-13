@@ -108,3 +108,7 @@ server.listen(PORT, '127.0.0.1', () => {
 });
 
 server.on('error', (err) => { console.error('[agent-service] Server error:', err); process.exit(1); });
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[agent-service] Unhandled rejection:', reason?.message || reason);
+});

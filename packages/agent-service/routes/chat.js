@@ -14,7 +14,7 @@
 import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
-import { getModel } from '../providers/index.js';
+import { getModel, getProviderStatus } from '../providers/index.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
 
@@ -145,25 +145,35 @@ export default async function chatRoute(req, res) {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
-  try {
-    const result = streamText({
-      model: getModel(),
-      system: SYSTEM_PROMPT,
-      messages: allMessages,
-      tools,
-      maxSteps: 10,
-      onFinish: ({ response }) => {
-        appendMessages(conversationId, [...messages, ...response.messages]);
-      },
-    });
+  const hasTools = Object.keys(tools).length > 0;
 
-    // pipeDataStreamToResponse sets Content-Type and calls writeHead internally
-    result.pipeDataStreamToResponse(res);
+  const streamOpts = {
+    model: getModel(),
+    system: SYSTEM_PROMPT,
+    messages: allMessages,
+    maxSteps: hasTools ? 10 : 1,
+    onFinish: ({ response }) => {
+      appendMessages(conversationId, [...messages, ...response.messages]);
+    },
+  };
+
+  // Only pass tools if the provider supports function calling.
+  // openai-compat providers (e.g. VNGCloud gemma) may not — omit tools to avoid
+  // InvalidResponseDataError when the model returns malformed tool_call chunks.
+  const { provider: providerName } = getProviderStatus();
+  if (hasTools && providerName !== 'openai-compat') {
+    streamOpts.tools = tools;
+  }
+
+  try {
+    const result = streamText(streamOpts);
+    // Must await — errors during streaming otherwise become unhandled rejections
+    await result.pipeDataStreamToResponse(res);
   } catch (err) {
-    console.error('[chat] Stream error:', err);
+    console.error('[chat] Stream error:', err.message || err);
     if (!res.headersSent) {
       res.writeHead(500).end('Internal server error');
-    } else {
+    } else if (!res.writableEnded) {
       res.end();
     }
   }
