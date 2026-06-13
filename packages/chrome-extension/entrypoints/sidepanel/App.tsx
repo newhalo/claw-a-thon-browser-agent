@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import ChatView from './views/ChatView';
 import Settings from './components/Settings';
 import TokensPanel from './components/TokensPanel';
+import { getAgentServiceConfig, checkAgentServiceHealth, pushNativeConfigToAgentService } from './lib/agentServiceClient';
 import './App.css';
 
 type Page = 'chat' | 'settings' | 'tokens';
@@ -11,52 +12,62 @@ function App() {
   const [isConfigured, setIsConfigured] = useState(false);
 
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (response) => {
-      const configured = !!(response?.config?.nativeServerUrl && response?.config?.authToken);
+    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async (response) => {
+      const cfg = response?.config;
+      const configured = !!(cfg?.nativeServerUrl && cfg?.authToken);
       setIsConfigured(configured);
-      if (!configured) setCurrentPage('settings');
+      if (!configured) { setCurrentPage('settings'); return; }
+
+      // Push native-server config to agent-service on startup
+      const { url: agentUrl } = await getAgentServiceConfig();
+      const alive = await checkAgentServiceHealth(agentUrl);
+      if (alive) {
+        await pushNativeConfigToAgentService(agentUrl, cfg.nativeServerUrl, cfg.authToken);
+      }
     });
   }, []);
 
-  const handleConfigSaved = () => {
+  const handleConfigSaved = async () => {
     setIsConfigured(true);
     setCurrentPage('chat');
+    // Re-push config after settings save
+    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async (response) => {
+      const cfg = response?.config;
+      if (!cfg?.nativeServerUrl) return;
+      const { url: agentUrl } = await getAgentServiceConfig();
+      await pushNativeConfigToAgentService(agentUrl, cfg.nativeServerUrl, cfg.authToken);
+    });
   };
 
   return (
-    <div className="app" style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-      <header className="app-header" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 12px' }}>
-        <h1 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>🤖 Browser Agent</h1>
-        <nav className="app-nav" style={{ display: 'flex', gap: 4 }}>
+    <div className="app">
+      <header className="app-header">
+        <h1>🤖 Browser Agent</h1>
+        <nav className="app-nav">
           <button
             className={`nav-btn ${currentPage === 'chat' ? 'active' : ''}`}
             onClick={() => setCurrentPage('chat')}
             title="Chat"
-          >
-            💬
-          </button>
+          >💬</button>
           <button
             className={`nav-btn ${currentPage === 'tokens' ? 'active' : ''}`}
             onClick={() => setCurrentPage('tokens')}
             disabled={!isConfigured}
             title="Tokens"
-          >
-            🔑
-          </button>
+          >🔑</button>
           <button
             className={`nav-btn ${currentPage === 'settings' ? 'active' : ''}`}
             onClick={() => setCurrentPage('settings')}
             title="Settings"
-          >
-            ⚙️
-          </button>
+          >⚙️</button>
         </nav>
       </header>
 
-      <main className="app-content" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {currentPage === 'chat' && (
+      <main className="app-content">
+        {/* ChatView always mounted to preserve Zustand store state */}
+        <div style={{ display: currentPage === 'chat' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
           <ChatView onOpenSettings={() => setCurrentPage('settings')} />
-        )}
+        </div>
         {currentPage === 'settings' && (
           <Settings onConfigSaved={handleConfigSaved} />
         )}

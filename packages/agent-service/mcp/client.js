@@ -1,24 +1,37 @@
 /**
  * MCP client connecting to native-server.
- * Maintains a single MCP session, fetches tools, and relays tool calls.
+ * Config can be set from .env at startup OR pushed at runtime via setMcpConfig().
  */
 
-const MCP_SERVER_URL = process.env.MCP_SERVER_URL || 'http://localhost:8080/mcp';
-const MCP_AUTH_TOKEN = process.env.MCP_AUTH_TOKEN || '';
+let mcpServerUrl = process.env.MCP_SERVER_URL || 'http://localhost:8080/mcp';
+let mcpAuthToken = process.env.MCP_AUTH_TOKEN || '';
 
-// Active MCP session ID (initialized on first use)
+// Active MCP session ID
 let sessionId = null;
 // Cached tool list (refreshed every 30s)
 let toolCache = { tools: [], fetchedAt: 0 };
 
+/** Called by the /native-config endpoint when extension pushes its config */
+export function setMcpConfig(url, token) {
+  const changed = url !== mcpServerUrl || token !== mcpAuthToken;
+  mcpServerUrl = url;
+  mcpAuthToken = token;
+  if (changed) resetSession();
+  console.log(`[mcp] Config updated — url: ${url}`);
+}
+
+export function getMcpConfig() {
+  return { url: mcpServerUrl, token: mcpAuthToken };
+}
+
 function authHeaders() {
   const h = { 'Content-Type': 'application/json' };
-  if (MCP_AUTH_TOKEN) h['Authorization'] = `Bearer ${MCP_AUTH_TOKEN}`;
+  if (mcpAuthToken) h['Authorization'] = `Bearer ${mcpAuthToken}`;
   return h;
 }
 
 async function initSession() {
-  const res = await fetch(MCP_SERVER_URL, {
+  const res = await fetch(mcpServerUrl, {
     method: 'POST',
     headers: authHeaders(),
     body: JSON.stringify({
@@ -33,15 +46,12 @@ async function initSession() {
     }),
   });
 
-  if (!res.ok) {
-    throw new Error(`MCP init failed: ${res.status} ${res.statusText}`);
-  }
+  if (!res.ok) throw new Error(`MCP init failed: ${res.status} ${res.statusText}`);
 
   sessionId = res.headers.get('mcp-session-id');
   if (!sessionId) throw new Error('No mcp-session-id in response headers');
 
-  // Send initialized notification
-  await fetch(MCP_SERVER_URL, {
+  await fetch(mcpServerUrl, {
     method: 'POST',
     headers: { ...authHeaders(), 'mcp-session-id': sessionId },
     body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
@@ -63,14 +73,13 @@ export async function listTools(forceRefresh = false) {
 
   await ensureSession();
 
-  const res = await fetch(MCP_SERVER_URL, {
+  const res = await fetch(mcpServerUrl, {
     method: 'POST',
     headers: { ...authHeaders(), 'mcp-session-id': sessionId },
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
   });
 
   if (!res.ok) {
-    // Session may have expired — reset and retry once
     if (res.status === 404 || res.status === 401) {
       sessionId = null;
       await initSession();
@@ -88,7 +97,7 @@ export async function listTools(forceRefresh = false) {
 export async function callTool(name, args) {
   await ensureSession();
 
-  const res = await fetch(MCP_SERVER_URL, {
+  const res = await fetch(mcpServerUrl, {
     method: 'POST',
     headers: { ...authHeaders(), 'mcp-session-id': sessionId },
     body: JSON.stringify({

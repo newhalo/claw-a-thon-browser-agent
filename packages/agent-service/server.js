@@ -10,7 +10,7 @@
  */
 
 import http from 'node:http';
-import { listTools, resetSession } from './mcp/client.js';
+import { listTools, resetSession, setMcpConfig, getMcpConfig } from './mcp/client.js';
 import chatRoute from './routes/chat.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -63,6 +63,22 @@ const server = http.createServer(async (req, res) => {
     resetSession();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // Extension pushes native-server URL + token so agent-service can connect to MCP
+  if (url.pathname === '/native-config' && req.method === 'POST') {
+    try {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const { nativeServerUrl, authToken } = JSON.parse(Buffer.concat(chunks).toString());
+      if (!nativeServerUrl) { res.writeHead(400).end('nativeServerUrl required'); return; }
+      setMcpConfig(nativeServerUrl.endsWith('/mcp') ? nativeServerUrl : `${nativeServerUrl}/mcp`, authToken || '');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, mcpUrl: getMcpConfig().url }));
+    } catch (err) {
+      res.writeHead(400).end('Invalid JSON');
+    }
     return;
   }
 

@@ -1,8 +1,3 @@
-/**
- * Client for agent-service (port 3000).
- * Config stored in chrome.storage.sync alongside native-server config.
- */
-
 export interface AgentServiceConfig {
   url: string;
 }
@@ -26,6 +21,28 @@ export async function saveAgentServiceConfig(config: AgentServiceConfig): Promis
 export async function checkAgentServiceHealth(url: string): Promise<boolean> {
   try {
     const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Push native-server config to agent-service so it can connect to MCP.
+ * Called after saving settings or on startup when both services are ready.
+ */
+export async function pushNativeConfigToAgentService(
+  agentServiceUrl: string,
+  nativeServerUrl: string,
+  authToken: string,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/native-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nativeServerUrl, authToken }),
+      signal: AbortSignal.timeout(3000),
+    });
     return res.ok;
   } catch {
     return false;

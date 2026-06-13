@@ -1,101 +1,107 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
 import ToolsPopover from '../components/ToolsPopover';
 import { getAgentServiceConfig, checkAgentServiceHealth } from '../lib/agentServiceClient';
+import { useChatStore, type ChatMessage, type ToolInvocation } from '../lib/chatStore';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-interface ToolInvocation {
-  toolCallId: string;
-  toolName: string;
-  state: 'call' | 'result';
-  args?: unknown;
-  result?: unknown;
+/** Strip browser_ / website_tool_{domain}_tab{n}_ prefixes for display */
+function shortToolName(name: string): string {
+  if (name.startsWith('browser_')) return name.slice(8).replace(/_/g, ' ');
+  const m = name.match(/^website_tool_[^_]+_tab\d+_(.+)$/);
+  if (m) return m[1].replace(/_/g, ' ');
+  return name.replace(/_/g, ' ');
 }
 
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  toolInvocations?: ToolInvocation[];
-}
-
-// ─── Stream parser (Vercel AI SDK v4 data stream protocol) ────────────────────
-
-function parseDataStreamChunk(raw: string): {
-  type: 'text' | 'tool-call' | 'tool-result' | 'finish' | 'error' | 'unknown';
-  data?: unknown;
-} {
-  if (!raw || !raw.includes(':')) return { type: 'unknown' };
+function parseDataStreamChunk(raw: string) {
   const colon = raw.indexOf(':');
+  if (colon === -1) return null;
   const prefix = raw.slice(0, colon);
   const payload = raw.slice(colon + 1);
-
   try {
     switch (prefix) {
-      case '0': return { type: 'text', data: JSON.parse(payload) };
-      case '9': return { type: 'tool-call', data: JSON.parse(payload) };
+      case '0': return { type: 'text',        data: JSON.parse(payload) as string };
+      case '9': return { type: 'tool-call',   data: JSON.parse(payload) };
       case 'a': return { type: 'tool-result', data: JSON.parse(payload) };
-      case 'd': return { type: 'finish', data: JSON.parse(payload) };
-      case '3': return { type: 'error', data: JSON.parse(payload) };
-      default:  return { type: 'unknown' };
+      case 'd': return { type: 'finish',      data: JSON.parse(payload) };
+      case '3': return { type: 'error',       data: JSON.parse(payload) as string };
+      default:  return null;
     }
-  } catch {
-    return { type: 'unknown' };
-  }
+  } catch { return null; }
 }
 
-// ─── Tool Call UI ─────────────────────────────────────────────────────────────
+// ─── Markdown renderer ────────────────────────────────────────────────────────
 
-function ToolCallBlock({ invocation }: { invocation: ToolInvocation }) {
-  const [collapsed, setCollapsed] = useState(true);
-  const isRunning = invocation.state === 'call';
+function Markdown({ content, isUser }: { content: string; isUser: boolean }) {
+  return (
+    <div className={`md ${isUser ? 'md-user' : ''}`}>
+      <ReactMarkdown>{content}</ReactMarkdown>
+    </div>
+  );
+}
+
+// ─── Tool call block ──────────────────────────────────────────────────────────
+
+function ToolCallBlock({ inv }: { inv: ToolInvocation }) {
+  const [open, setOpen] = useState(false);
+  const done = inv.state === 'result';
+  const label = shortToolName(inv.toolName);
 
   return (
     <div style={{
-      margin: '6px 0',
-      border: '1px solid var(--border)',
+      margin: '4px 0',
       borderRadius: 8,
+      border: '1px solid var(--border)',
       overflow: 'hidden',
       fontSize: 12,
+      animation: 'fadeIn 0.2s ease',
     }}>
       <button
-        onClick={() => setCollapsed(c => !c)}
+        onClick={() => setOpen(o => !o)}
         style={{
           width: '100%',
-          background: isRunning ? 'rgba(99,102,241,0.08)' : 'rgba(34,197,94,0.06)',
+          background: done ? 'rgba(16,185,129,0.05)' : 'rgba(79,70,229,0.06)',
           border: 'none',
-          padding: '6px 10px',
+          padding: '5px 10px',
           display: 'flex',
           alignItems: 'center',
           gap: 6,
           cursor: 'pointer',
-          color: 'var(--text-secondary)',
           textAlign: 'left',
         }}
       >
-        <span>{isRunning ? '⚙️' : '✅'}</span>
-        <span style={{ fontFamily: 'monospace', fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>
-          {invocation.toolName}
+        <span style={{ fontSize: 13 }}>{done ? '✅' : '⚙️'}</span>
+        <span style={{ fontWeight: 600, color: 'var(--text-primary)', flex: 1, textTransform: 'capitalize' }}>
+          {label}
         </span>
-        {isRunning && <span style={{ fontSize: 11, opacity: 0.7 }}>running…</span>}
-        <span style={{ marginLeft: 'auto', opacity: 0.5 }}>{collapsed ? '▸' : '▾'}</span>
+        {!done && (
+          <span style={{
+            width: 10, height: 10, borderRadius: '50%',
+            border: '2px solid var(--accent)',
+            borderTopColor: 'transparent',
+            animation: 'spin 0.8s linear infinite',
+            display: 'inline-block',
+          }} />
+        )}
+        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{open ? '▴' : '▾'}</span>
       </button>
 
-      {!collapsed && (
-        <div style={{ padding: '8px 10px', background: 'var(--bg-secondary)', borderTop: '1px solid var(--border)' }}>
-          {invocation.args && (
-            <div style={{ marginBottom: 6 }}>
-              <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginBottom: 2 }}>Input</div>
+      {open && (
+        <div style={{ padding: '8px 10px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
+          {inv.args && Object.keys(inv.args as object).length > 0 && (
+            <div style={{ marginBottom: done ? 8 : 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Args</div>
               <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text-primary)' }}>
-                {JSON.stringify(invocation.args, null, 2)}
+                {JSON.stringify(inv.args, null, 2)}
               </pre>
             </div>
           )}
-          {invocation.state === 'result' && invocation.result !== undefined && (
+          {done && inv.result !== undefined && (
             <div>
-              <div style={{ fontSize: 10, color: 'var(--text-secondary)', marginBottom: 2 }}>Result</div>
-              <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text-primary)', maxHeight: 120, overflow: 'auto' }}>
-                {typeof invocation.result === 'string' ? invocation.result : JSON.stringify(invocation.result, null, 2)}
+              <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 3, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Result</div>
+              <pre style={{ margin: 0, fontSize: 11, whiteSpace: 'pre-wrap', wordBreak: 'break-all', color: 'var(--text-primary)', maxHeight: 140, overflow: 'auto' }}>
+                {typeof inv.result === 'string' ? inv.result : JSON.stringify(inv.result, null, 2)}
               </pre>
             </div>
           )}
@@ -105,38 +111,38 @@ function ToolCallBlock({ invocation }: { invocation: ToolInvocation }) {
   );
 }
 
-// ─── Message Bubble ───────────────────────────────────────────────────────────
+// ─── Message bubble ───────────────────────────────────────────────────────────
 
-function MessageBubble({ message }: { message: ChatMessage }) {
-  const isUser = message.role === 'user';
+function MessageBubble({ msg }: { msg: ChatMessage }) {
+  const isUser = msg.role === 'user';
 
   return (
     <div style={{
       display: 'flex',
       flexDirection: 'column',
       alignItems: isUser ? 'flex-end' : 'flex-start',
-      marginBottom: 12,
+      marginBottom: 14,
+      animation: 'fadeIn 0.2s ease',
     }}>
-      {message.content && (
+      {msg.content && (
         <div style={{
-          maxWidth: '85%',
-          padding: '8px 12px',
-          borderRadius: isUser ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-          background: isUser ? 'var(--accent)' : 'var(--bg-secondary)',
-          color: isUser ? 'white' : 'var(--text-primary)',
-          fontSize: 14,
-          lineHeight: 1.5,
-          whiteSpace: 'pre-wrap',
+          maxWidth: '84%',
+          padding: '9px 13px',
+          borderRadius: isUser ? '16px 16px 4px 16px' : '4px 16px 16px 16px',
+          background: isUser ? 'var(--accent)' : 'var(--bg-surface)',
+          color: isUser ? '#fff' : 'var(--text-primary)',
+          border: isUser ? 'none' : '1px solid var(--border)',
+          boxShadow: 'var(--shadow-sm)',
           wordBreak: 'break-word',
         }}>
-          {message.content}
+          <Markdown content={msg.content} isUser={isUser} />
         </div>
       )}
 
-      {!isUser && message.toolInvocations && message.toolInvocations.length > 0 && (
-        <div style={{ maxWidth: '95%', width: '100%', marginTop: message.content ? 4 : 0 }}>
-          {message.toolInvocations.map(inv => (
-            <ToolCallBlock key={inv.toolCallId} invocation={inv} />
+      {!isUser && msg.toolInvocations && msg.toolInvocations.length > 0 && (
+        <div style={{ maxWidth: '92%', width: '100%', marginTop: msg.content ? 5 : 0 }}>
+          {msg.toolInvocations.map(inv => (
+            <ToolCallBlock key={inv.toolCallId} inv={inv} />
           ))}
         </div>
       )}
@@ -144,44 +150,35 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-// ─── Status Bar ───────────────────────────────────────────────────────────────
+// ─── Typing indicator ─────────────────────────────────────────────────────────
 
-function StatusBar({ serviceUrl, online }: { serviceUrl: string; online: boolean | null }) {
+function TypingDots() {
   return (
-    <div style={{
-      padding: '4px 12px',
-      borderBottom: '1px solid var(--border)',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6,
-      fontSize: 11,
-      color: 'var(--text-secondary)',
-      background: 'var(--bg-secondary)',
-    }}>
-      <span style={{ color: online === null ? '#f59e0b' : online ? '#22c55e' : '#ef4444' }}>●</span>
-      <span>agent-service</span>
-      <span style={{ opacity: 0.5 }}>·</span>
-      <span style={{ opacity: 0.6 }}>{serviceUrl}</span>
+    <div style={{ display: 'flex', gap: 4, padding: '8px 4px', marginBottom: 14 }}>
+      {[0, 1, 2].map(i => (
+        <span key={i} style={{
+          width: 7, height: 7, borderRadius: '50%',
+          background: 'var(--text-muted)',
+          animation: `pulse 1.2s ease ${i * 0.2}s infinite`,
+          display: 'inline-block',
+        }} />
+      ))}
     </div>
   );
 }
 
 // ─── ChatView ─────────────────────────────────────────────────────────────────
 
-interface ChatViewProps {
-  onOpenSettings: () => void;
-}
+interface Props { onOpenSettings: () => void }
 
-export default function ChatView({ onOpenSettings }: ChatViewProps) {
-  const conversationId = useRef(crypto.randomUUID());
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+export default function ChatView({ onOpenSettings }: Props) {
+  const { messages, conversationId, isLoading, streamError, addMessage, updateLastAssistant, setLoading, setError, clearHistory } = useChatStore();
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [streamError, setStreamError] = useState<string | null>(null);
   const [serviceUrl, setServiceUrl] = useState('http://localhost:3000');
   const [online, setOnline] = useState<boolean | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     getAgentServiceConfig().then(cfg => {
@@ -191,9 +188,7 @@ export default function ChatView({ onOpenSettings }: ChatViewProps) {
   }, []);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      checkAgentServiceHealth(serviceUrl).then(ok => setOnline(ok));
-    }, 15_000);
+    const id = setInterval(() => checkAgentServiceHealth(serviceUrl).then(ok => setOnline(ok)), 15_000);
     return () => clearInterval(id);
   }, [serviceUrl]);
 
@@ -203,161 +198,137 @@ export default function ChatView({ onOpenSettings }: ChatViewProps) {
 
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || isLoading) return;
+    setError(null);
 
-    setStreamError(null);
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: text,
-    };
+    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: text };
     const assistantId = crypto.randomUUID();
-    const newMessages = [...messages, userMessage];
-
-    setMessages([...newMessages, {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      toolInvocations: [],
-    }]);
+    addMessage(userMsg);
+    addMessage({ id: assistantId, role: 'assistant', content: '', toolInvocations: [] });
     setInput('');
-    setIsLoading(true);
+    setLoading(true);
+    if (textareaRef.current) { textareaRef.current.style.height = 'auto'; }
 
     abortRef.current = new AbortController();
+
+    // Snapshot messages BEFORE adding user turn (store is async)
+    const historyForRequest = messages.map(m => ({ role: m.role, content: m.content }));
+    historyForRequest.push({ role: 'user', content: text });
 
     try {
       const res = await fetch(`${serviceUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: newMessages.map(m => ({ role: m.role, content: m.content })),
-          conversationId: conversationId.current,
-        }),
+        body: JSON.stringify({ messages: historyForRequest, conversationId }),
         signal: abortRef.current.signal,
       });
 
-      if (!res.ok || !res.body) {
-        throw new Error(`Server error: ${res.status}`);
-      }
+      if (!res.ok || !res.body) throw new Error(`Server error: ${res.status}`);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-
-      // Per-message state accumulated during streaming
       let accContent = '';
-      const accTools: Map<string, ToolInvocation> = new Map();
+      const accTools = new Map<string, ToolInvocation>();
 
       const flush = () => {
-        setMessages(prev => prev.map(m =>
-          m.id === assistantId
-            ? { ...m, content: accContent, toolInvocations: Array.from(accTools.values()) }
-            : m
-        ));
+        updateLastAssistant(m => ({
+          ...m,
+          content: accContent,
+          toolInvocations: Array.from(accTools.values()),
+        }));
       };
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
-
         for (const line of lines) {
           const trimmed = line.trim();
           if (!trimmed) continue;
-
-          const { type, data } = parseDataStreamChunk(trimmed);
-
-          if (type === 'text' && typeof data === 'string') {
-            accContent += data;
+          const chunk = parseDataStreamChunk(trimmed);
+          if (!chunk) continue;
+          if (chunk.type === 'text' && typeof chunk.data === 'string') {
+            accContent += chunk.data; flush();
+          } else if (chunk.type === 'tool-call') {
+            const tc = chunk.data as { toolCallId: string; toolName: string; args: unknown };
+            accTools.set(tc.toolCallId, { toolCallId: tc.toolCallId, toolName: tc.toolName, state: 'call', args: tc.args });
             flush();
-          } else if (type === 'tool-call' && data && typeof data === 'object') {
-            const tc = data as { toolCallId: string; toolName: string; args: unknown };
-            accTools.set(tc.toolCallId, {
-              toolCallId: tc.toolCallId,
-              toolName: tc.toolName,
-              state: 'call',
-              args: tc.args,
-            });
-            flush();
-          } else if (type === 'tool-result' && data && typeof data === 'object') {
-            const tr = data as { toolCallId: string; result: unknown };
-            const existing = accTools.get(tr.toolCallId);
-            if (existing) {
-              accTools.set(tr.toolCallId, { ...existing, state: 'result', result: tr.result });
-              flush();
-            }
-          } else if (type === 'error' && typeof data === 'string') {
-            setStreamError(data);
+          } else if (chunk.type === 'tool-result') {
+            const tr = chunk.data as { toolCallId: string; result: unknown };
+            const ex = accTools.get(tr.toolCallId);
+            if (ex) { accTools.set(tr.toolCallId, { ...ex, state: 'result', result: tr.result }); flush(); }
+          } else if (chunk.type === 'error' && typeof chunk.data === 'string') {
+            setError(chunk.data);
           }
         }
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;
-      const msg = err instanceof Error ? err.message : 'Unknown error';
-      setStreamError(msg);
-      setMessages(prev => prev.filter(m => m.id !== assistantId));
+      setError(err instanceof Error ? err.message : 'Unknown error');
+      // Remove empty placeholder assistant message
+      updateLastAssistant(m => m.content === '' ? { ...m, content: '_(error)_' } : m);
     } finally {
-      setIsLoading(false);
+      setLoading(false);
       abortRef.current = null;
     }
-  }, [messages, isLoading, serviceUrl]);
+  }, [messages, isLoading, serviceUrl, conversationId]);
 
-  const handleSubmit = useCallback((e?: React.FormEvent) => {
-    e?.preventDefault();
-    sendMessage(input);
-  }, [input, sendMessage]);
-
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage(input);
-    }
-  }, [input, sendMessage]);
-
-  const stopStreaming = () => {
-    abortRef.current?.abort();
-    setIsLoading(false);
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); }
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
-      <StatusBar serviceUrl={serviceUrl} online={online} />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)' }}>
+
+      {/* Status bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '5px 14px',
+        background: 'var(--bg-surface)', borderBottom: '1px solid var(--border)',
+        fontSize: 11, color: 'var(--text-muted)',
+      }}>
+        <span style={{
+          width: 6, height: 6, borderRadius: '50%', flexShrink: 0,
+          background: online === null ? 'var(--warning)' : online ? 'var(--success)' : 'var(--error)',
+        }} />
+        <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}>agent-service</span>
+        <span style={{ opacity: 0.5 }}>·</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{serviceUrl}</span>
+        {messages.length > 0 && (
+          <button
+            onClick={clearHistory}
+            title="Clear conversation"
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, padding: '1px 4px', borderRadius: 4 }}
+          >
+            ✕ Clear
+          </button>
+        )}
+      </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 12px 4px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px 8px' }}>
         {messages.length === 0 && (
-          <div style={{ textAlign: 'center', marginTop: 40, color: 'var(--text-secondary)' }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>🤖</div>
-            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6, color: 'var(--text-primary)' }}>
+          <div style={{ textAlign: 'center', paddingTop: 48 }}>
+            <div style={{ fontSize: 36, marginBottom: 14 }}>🤖</div>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8, color: 'var(--text-primary)' }}>
               Browser Agent
             </div>
-            <div style={{ fontSize: 13, opacity: 0.7, lineHeight: 1.5 }}>
-              Hỏi tôi bất cứ điều gì về trình duyệt.<br />
-              Tôi có thể mở tab, điều hướng, đọc trang web<br />
-              và tự động hóa các tác vụ của bạn.
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, maxWidth: 240, margin: '0 auto' }}>
+              Tôi có thể mở tab, điều hướng, đọc trang web và tự động hóa tác vụ của bạn.
             </div>
           </div>
         )}
 
-        {messages.map(m => <MessageBubble key={m.id} message={m} />)}
+        {messages.map(m => <MessageBubble key={m.id} msg={m} />)}
 
-        {isLoading && !messages.find(m => m.id && m.role === 'assistant' && m.content === '' && (m.toolInvocations?.length ?? 0) === 0) && (
-          <div style={{ color: 'var(--text-secondary)', fontSize: 20, marginBottom: 8, paddingLeft: 4 }}>
-            <span style={{ animation: 'pulse 1.2s infinite' }}>●●●</span>
-          </div>
-        )}
+        {isLoading && messages[messages.length - 1]?.role !== 'assistant' && <TypingDots />}
 
         {streamError && (
           <div style={{
-            padding: '8px 12px',
-            background: 'rgba(239,68,68,0.1)',
-            border: '1px solid rgba(239,68,68,0.3)',
-            borderRadius: 8,
-            color: '#ef4444',
-            fontSize: 12,
-            marginBottom: 8,
+            padding: '8px 12px', borderRadius: 8, marginBottom: 10,
+            background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
+            color: 'var(--error)', fontSize: 12,
           }}>
             ⚠️ {streamError}
           </div>
@@ -366,50 +337,52 @@ export default function ChatView({ onOpenSettings }: ChatViewProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input area */}
-      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+      {/* Input */}
+      <div style={{
+        padding: '8px 12px 10px',
+        background: 'var(--bg-elevated)',
+        borderTop: '1px solid var(--border)',
+      }}>
+        {/* Toolbar */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
           <ToolsPopover />
           <button
-            title="Settings"
             onClick={onOpenSettings}
+            title="Settings"
             style={{
-              background: 'none',
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              padding: '4px 8px',
-              cursor: 'pointer',
-              fontSize: 14,
-              color: 'var(--text-secondary)',
+              display: 'flex', alignItems: 'center', gap: 4,
+              background: 'none', border: '1px solid var(--border)',
+              borderRadius: 6, padding: '3px 8px', cursor: 'pointer',
+              fontSize: 12, color: 'var(--text-secondary)',
             }}
           >
-            ⚙️
+            <span style={{ fontSize: 13 }}>⚙️</span>
+            <span>Settings</span>
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+        {/* Text input row */}
+        <div style={{
+          display: 'flex', gap: 6, alignItems: 'flex-end',
+          background: 'var(--bg-surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 12,
+          padding: '6px 6px 6px 12px',
+          transition: 'border-color 0.15s',
+        }}>
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Nhắn tin cho agent… (Enter gửi, Shift+Enter xuống dòng)"
+            placeholder="Nhắn tin cho agent…"
             rows={1}
             disabled={isLoading}
             style={{
-              flex: 1,
-              resize: 'none',
-              padding: '8px 12px',
-              borderRadius: 10,
-              border: '1px solid var(--border)',
-              background: 'var(--bg-primary)',
-              color: 'var(--text-primary)',
-              fontSize: 14,
-              fontFamily: 'inherit',
-              lineHeight: 1.4,
-              outline: 'none',
-              maxHeight: 120,
-              overflow: 'auto',
-              opacity: isLoading ? 0.6 : 1,
+              flex: 1, resize: 'none', border: 'none', background: 'transparent',
+              color: 'var(--text-primary)', fontSize: 13, fontFamily: 'inherit',
+              lineHeight: 1.5, outline: 'none', maxHeight: 120, overflow: 'auto',
+              padding: 0, opacity: isLoading ? 0.7 : 1,
             }}
             onInput={e => {
               const el = e.currentTarget;
@@ -419,51 +392,36 @@ export default function ChatView({ onOpenSettings }: ChatViewProps) {
           />
           {isLoading ? (
             <button
-              type="button"
-              onClick={stopStreaming}
+              onClick={() => { abortRef.current?.abort(); setLoading(false); }}
+              title="Stop"
               style={{
-                padding: '8px 14px',
-                borderRadius: 10,
-                border: 'none',
-                background: '#ef4444',
-                color: 'white',
-                cursor: 'pointer',
-                fontSize: 16,
-                flexShrink: 0,
-                alignSelf: 'flex-end',
+                width: 30, height: 30, borderRadius: 8, border: 'none',
+                background: 'var(--error)', color: 'white',
+                cursor: 'pointer', fontSize: 12, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
-            >
-              ■
-            </button>
+            >■</button>
           ) : (
             <button
-              type="submit"
+              onClick={() => sendMessage(input)}
               disabled={!input.trim()}
+              title="Send (Enter)"
               style={{
-                padding: '8px 14px',
-                borderRadius: 10,
-                border: 'none',
-                background: !input.trim() ? 'var(--border)' : 'var(--accent)',
-                color: !input.trim() ? 'var(--text-secondary)' : 'white',
-                cursor: !input.trim() ? 'default' : 'pointer',
-                fontSize: 16,
+                width: 30, height: 30, borderRadius: 8, border: 'none',
+                background: input.trim() ? 'var(--accent)' : 'var(--bg-active)',
+                color: input.trim() ? 'white' : 'var(--text-muted)',
+                cursor: input.trim() ? 'pointer' : 'default',
+                fontSize: 14, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
                 transition: 'background 0.15s',
-                flexShrink: 0,
-                alignSelf: 'flex-end',
               }}
-            >
-              ↑
-            </button>
+            >↑</button>
           )}
-        </form>
+        </div>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 5, textAlign: 'center' }}>
+          Enter gửi · Shift+Enter xuống dòng
+        </div>
       </div>
-
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1 }
-          50% { opacity: 0.3 }
-        }
-      `}</style>
     </div>
   );
 }
