@@ -82,9 +82,9 @@ const server = http.createServer(async (req, res) => {
   // ── LLM Provider config (pushed from extension setup UI) ─────────────────
   if (url.pathname === '/provider-config' && req.method === 'POST') {
     try {
-      const { provider, apiKey, model, baseUrl } = await readBody(req);
+      const { provider, apiKey, model, baseUrl, toolsSupported } = await readBody(req);
       if (!provider || !apiKey) { res.writeHead(400).end('provider and apiKey required'); return; }
-      setProviderConfig({ provider, apiKey, model, baseUrl });
+      setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, status: getProviderStatus() }));
     } catch { res.writeHead(400).end('Invalid JSON'); }
