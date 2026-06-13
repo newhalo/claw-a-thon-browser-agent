@@ -24,6 +24,7 @@ interface ProviderConfig {
   apiKey?: string;
   model?: string;
   baseUrl?: string;
+  toolsSupported?: boolean;
 }
 
 function App() {
@@ -85,7 +86,7 @@ function App() {
       chrome.storage.sync.get(['agentProviderConfig'], async (result) => {
         const saved: ProviderConfig = result.agentProviderConfig;
         if (!saved?.provider || !saved?.apiKey) { resolve(false); return; }
-        const ok = await pushProviderConfig(url, saved.provider, saved.apiKey, saved.model, saved.baseUrl);
+        const ok = await pushProviderConfig(url, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported);
         resolve(ok);
       });
     });

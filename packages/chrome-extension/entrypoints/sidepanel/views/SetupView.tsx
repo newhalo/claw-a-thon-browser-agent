@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { pushNativeConfigToAgentService } from '../lib/agentServiceClient';
+import { pushNativeConfigToAgentService, pushProviderConfig } from '../lib/agentServiceClient';
 
 type Provider = 'anthropic' | 'openai' | 'openai-compat';
 
@@ -53,6 +53,7 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [toolsSupported, setToolsSupported] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -71,19 +72,14 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
       }
 
       // 2. Push provider config
-      const res = await fetch(`${agentServiceUrl}/provider-config`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          provider,
-          apiKey: apiKey.trim(),
-          model: model.trim() || meta.defaultModel || undefined,
-          baseUrl: provider === 'openai-compat' ? baseUrl.trim() : undefined,
-        }),
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (!res.ok) { setError(`Lỗi: ${res.status} ${res.statusText}`); return; }
+      const effectiveToolsSupported = provider !== 'openai-compat' ? undefined : toolsSupported;
+      const ok = await pushProviderConfig(
+        agentServiceUrl, provider, apiKey.trim(),
+        model.trim() || meta.defaultModel || undefined,
+        provider === 'openai-compat' ? baseUrl.trim() : undefined,
+        effectiveToolsSupported,
+      );
+      if (!ok) { setError('Agent service không phản hồi'); return; }
 
       // 3. Save to extension storage for next session
       chrome.storage.sync.set({
@@ -92,6 +88,7 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
           apiKey: apiKey.trim(),
           model: model.trim() || meta.defaultModel || '',
           baseUrl: baseUrl.trim(),
+          toolsSupported: effectiveToolsSupported,
         }
       });
 
@@ -131,7 +128,7 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
             {(Object.entries(PROVIDERS) as [Provider, ProviderMeta][]).map(([key, m]) => (
               <button
                 key={key}
-                onClick={() => { setProvider(key); setApiKey(''); setModel(''); setBaseUrl(''); }}
+                onClick={() => { setProvider(key); setApiKey(''); setModel(''); setBaseUrl(''); setToolsSupported(false); }}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
@@ -165,6 +162,24 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
               style={inputStyle}
             />
           </div>
+        )}
+
+        {/* Tool calling opt-in (openai-compat only) */}
+        {meta.needsBaseUrl && (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={toolsSupported}
+              onChange={e => setToolsSupported(e.target.checked)}
+              style={{ marginTop: 2, accentColor: 'var(--accent)', width: 14, height: 14, flexShrink: 0 }}
+            />
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>Hỗ trợ function/tool calling</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                Bật nếu model hỗ trợ OpenAI tool calling (claude, gpt-4o, llama-3.1…). Để tắt với gemma, mistral cũ.
+              </div>
+            </div>
+          </label>
         )}
 
         {/* API Key */}

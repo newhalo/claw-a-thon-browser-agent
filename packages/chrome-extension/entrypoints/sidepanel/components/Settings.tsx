@@ -21,6 +21,7 @@ function Settings({ onConfigSaved }: SettingsProps) {
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [toolsSupported, setToolsSupported] = useState(false);
   const [providerSaving, setProviderSaving] = useState(false);
   const [providerMsg, setProviderMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -53,6 +54,7 @@ function Settings({ onConfigSaved }: SettingsProps) {
         setApiKey(saved.apiKey || '');
         setModel(saved.model || '');
         setBaseUrl(saved.baseUrl || '');
+        setToolsSupported(saved.toolsSupported === true);
       }
     });
   };
@@ -109,15 +111,17 @@ function Settings({ onConfigSaved }: SettingsProps) {
         }
       });
 
+      const effectiveToolsSupported = provider === 'openai-compat' ? toolsSupported : undefined;
       const ok = await pushProviderConfig(
         agentUrl, provider, apiKey.trim(),
         model.trim() || undefined,
         provider === 'openai-compat' ? baseUrl.trim() : undefined,
+        effectiveToolsSupported,
       );
 
       if (!ok) { setProviderMsg({ type: 'error', text: 'Agent service không phản hồi' }); return; }
 
-      chrome.storage.sync.set({ agentProviderConfig: { provider, apiKey: apiKey.trim(), model: model.trim(), baseUrl: baseUrl.trim() } });
+      chrome.storage.sync.set({ agentProviderConfig: { provider, apiKey: apiKey.trim(), model: model.trim(), baseUrl: baseUrl.trim(), toolsSupported: effectiveToolsSupported } });
       setProviderStatus({ configured: true, provider, model: model.trim() || null });
       setProviderMsg({ type: 'success', text: '✅ Provider đã cập nhật!' });
       setShowProviderForm(false);
@@ -220,6 +224,23 @@ function Settings({ onConfigSaved }: SettingsProps) {
                 <input value={model} onChange={e => setModel(e.target.value)}
                   placeholder={provider === 'anthropic' ? 'claude-sonnet-4-6' : provider === 'openai' ? 'gpt-4o' : 'model-name'} />
               </div>
+
+              {provider === 'openai-compat' && (
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={toolsSupported}
+                    onChange={e => setToolsSupported(e.target.checked)}
+                    style={{ marginTop: 2, accentColor: 'var(--accent)', width: 14, height: 14, flexShrink: 0 }}
+                  />
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>Hỗ trợ function/tool calling</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>
+                      Bật với claude, gpt-4o, llama-3.1+. Tắt với gemma, mistral cũ.
+                    </div>
+                  </div>
+                </label>
+              )}
 
               {providerMsg && (
                 <div style={{

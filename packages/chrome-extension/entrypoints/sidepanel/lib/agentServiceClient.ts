@@ -33,7 +33,7 @@ export async function checkAgentServiceHealth(url: string): Promise<boolean> {
  */
 export interface HealthStatus {
   status: string;
-  provider?: { configured: boolean; provider?: string | null; model?: string | null };
+  provider?: { configured: boolean; provider?: string | null; model?: string | null; toolsSupported?: boolean | null };
   mcp?: string;
 }
 
@@ -53,12 +53,13 @@ export async function pushProviderConfig(
   apiKey: string,
   model?: string,
   baseUrl?: string,
+  toolsSupported?: boolean,
 ): Promise<boolean> {
   try {
     const res = await fetch(`${agentServiceUrl}/provider-config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, apiKey, model, baseUrl }),
+      body: JSON.stringify({ provider, apiKey, model, baseUrl, toolsSupported }),
       signal: AbortSignal.timeout(5000),
     });
     return res.ok;

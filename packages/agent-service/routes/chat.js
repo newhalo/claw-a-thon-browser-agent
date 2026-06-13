@@ -14,7 +14,7 @@
 import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
-import { getModel, getProviderStatus } from '../providers/index.js';
+import { getModel, getProviderStatus, isToolsSupported } from '../providers/index.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
 
@@ -153,28 +153,27 @@ export default async function chatRoute(req, res) {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const { provider: providerName, configured } = getProviderStatus();
+    const { configured } = getProviderStatus();
     if (!configured) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'provider_not_configured' }));
       return;
     }
 
+    const toolsOk = isToolsSupported();
     const hasTools = Object.keys(tools).length > 0;
-    const isCompatProvider = providerName === 'openai-compat';
 
     const streamOpts = {
       model: getModel(),
-      system: isCompatProvider ? SYSTEM_PROMPT_NO_TOOLS : SYSTEM_PROMPT,
+      system: toolsOk ? SYSTEM_PROMPT : SYSTEM_PROMPT_NO_TOOLS,
       messages: allMessages,
-      maxSteps: (hasTools && !isCompatProvider) ? 10 : 1,
+      maxSteps: (hasTools && toolsOk) ? 10 : 1,
       onFinish: ({ response }) => {
         appendMessages(conversationId, [...messages, ...response.messages]);
       },
     };
 
-    // Pass tools only when provider reliably supports function calling
-    if (hasTools && !isCompatProvider) {
+    if (hasTools && toolsOk) {
       streamOpts.tools = tools;
     }
 
