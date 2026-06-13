@@ -191,7 +191,9 @@ export default async function chatRoute(req, res) {
       // The client should handle retry/backoff at a higher level.
       maxRetries: 0,
       onFinish: ({ response }) => {
-        appendMessages(conversationId, [...messages, ...response.messages]);
+        if (response?.messages?.length) {
+          appendMessages(conversationId, [...messages, ...response.messages]);
+        }
       },
     };
 
@@ -203,26 +205,23 @@ export default async function chatRoute(req, res) {
       ...streamOpts,
       onError: ({ error }) => {
         const status = error?.statusCode ?? error?.status;
-        const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'] || error?.responseHeaders?.['retry-after'];
+        const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'];
+        let userMsg;
         if (status === 429) {
-          const wait = retryAfter ? ` (reset in ${Math.ceil(retryAfter / 60)} min)` : '';
-          console.warn(`[chat] Rate limit hit${wait}`);
-        } else {
-          console.error('[chat] streamText error:', error?.message || error);
-        }
-      },
-    });
-    await result.pipeDataStreamToResponse(res, {
-      getErrorMessage: (error) => {
-        const status = error?.statusCode ?? error?.status;
-        if (status === 429) {
-          const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'];
           const wait = retryAfter ? ` Thử lại sau ${Math.ceil(retryAfter / 60)} phút.` : '';
-          return `⚠️ Rate limit: API quota đã hết.${wait}`;
+          userMsg = `Rate limit: API quota đã hết.${wait}`;
+          console.warn(`[chat] ${userMsg}`);
+        } else {
+          userMsg = error?.message || 'Unknown error';
+          console.error('[chat] streamText error:', userMsg);
         }
-        return `⚠️ Lỗi: ${error?.message || 'Unknown error'}`;
+        // Write error chunk manually so client displays the message
+        if (!res.writableEnded) {
+          res.write(`3:${JSON.stringify(userMsg)}\n`);
+        }
       },
     });
+    await result.pipeDataStreamToResponse(res);
   } catch (err) {
     const isRateLimit = err.message?.includes('Too Many Requests') || err.statusCode === 429 || err.status === 429;
     console.error(`[chat] Stream error${isRateLimit ? ' (rate limit)' : ''}:`, err.message || err);

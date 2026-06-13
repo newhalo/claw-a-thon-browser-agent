@@ -301,6 +301,8 @@ export default function ChatView({ onOpenSettings }: Props) {
             if (ex) { accTools.set(tr.toolCallId, { ...ex, state: 'result', result: tr.result }); flush(); }
           } else if (chunk.type === 'error' && typeof chunk.data === 'string') {
             setError(chunk.data);
+            // Update assistant bubble so error is visible inline, not just in banner
+            updateLastAssistant(m => m.content === '' ? { ...m, content: `_(${chunk.data})_` } : m);
           }
         }
       }
