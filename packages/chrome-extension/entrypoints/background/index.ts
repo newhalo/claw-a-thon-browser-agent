@@ -72,8 +72,8 @@ export default defineBackground({
       browser_storage_clear:      'high',
       // Clipboard read — can capture passwords or sensitive text
       browser_clipboard_read:     'high',
-      // Screenshot — captures whatever is visible (banking, passwords, etc.)
-      browser_take_screenshot:    'high',
+      // Screenshot — useful for agent vision; user can disable if privacy-sensitive
+      browser_take_screenshot:    'medium',
     };
 
     // Tools that are OFF by default; user can explicitly enable them.
