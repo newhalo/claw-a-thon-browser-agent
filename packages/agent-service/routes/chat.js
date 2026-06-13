@@ -134,11 +134,9 @@ export default async function chatRoute(req, res) {
 
   const tools = buildToolsFromMcp(mcpTools, enabledTools);
 
-  // Merge with short-term history
-  const history = getHistory(conversationId);
-  const allMessages = history.length > 0
-    ? [...history, ...messages]
-    : messages;
+  // Client (Zustand) already sends the full conversation history.
+  // Do NOT prepend server-side history — that would duplicate messages and confuse the model.
+  const allMessages = messages;
 
   // Set headers before streaming — pipeDataStreamToResponse will call writeHead itself
   res.setHeader('X-Conversation-Id', conversationId);
