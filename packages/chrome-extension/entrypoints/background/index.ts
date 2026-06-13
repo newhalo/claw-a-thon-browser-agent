@@ -8,6 +8,43 @@
 
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 
+/**
+ * Resize a screenshot dataUrl to max 1280px wide and convert to JPEG 85%.
+ * Dramatically reduces token cost when passed to vision LLMs.
+ * Uses OffscreenCanvas + createImageBitmap — both available in MV3 service workers.
+ */
+async function resizeScreenshot(dataUrl: string, maxWidth = 1280): Promise<{ base64: string; mimeType: string }> {
+  // fetch() doesn't support data: URLs in MV3 service workers — parse directly
+  const comma = dataUrl.indexOf(',');
+  const srcMime = dataUrl.slice(5, dataUrl.indexOf(';')) || 'image/png';
+  const srcB64 = dataUrl.slice(comma + 1);
+  const srcBinary = atob(srcB64);
+  const srcBytes = new Uint8Array(srcBinary.length);
+  for (let i = 0; i < srcBinary.length; i++) srcBytes[i] = srcBinary.charCodeAt(i);
+  const blob = new Blob([srcBytes], { type: srcMime });
+  const bitmap = await createImageBitmap(blob);
+
+  const scale = Math.min(1, maxWidth / bitmap.width);
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+
+  const canvas = new OffscreenCanvas(w, h);
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+
+  const outBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.85 });
+  const buffer = await outBlob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  // Chunked btoa to avoid stack overflow on large images
+  const chunkSize = 8192;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return { base64: btoa(binary), mimeType: 'image/jpeg' };
+}
+
 export default defineBackground({
   main() {
     // ─── Constants ───────────────────────────────────────────────────────────
@@ -1151,12 +1188,13 @@ export default defineBackground({
             data = await executeBrowserTool(name, args);
           }
 
-          // Format screenshot as image content
+          // Format screenshot as image content — resize to max 1280px wide, JPEG 85%
           if (name === 'browser_take_screenshot' && (data as any)?.dataUrl) {
-            const base64 = String((data as any).dataUrl).replace(/^data:image\/\w+;base64,/, '');
+            const { base64, mimeType } = await resizeScreenshot(String((data as any).dataUrl));
+            // Keep { dataUrl } format so native-server toolResultToContent handles it correctly
             await requestNativeServer(`/provider/respond/${requestId}`, {
               method: 'POST',
-              body: JSON.stringify({ status: 'success', data: { content: [{ type: 'image', data: base64, mimeType: 'image/png' }] } }),
+              body: JSON.stringify({ status: 'success', data: { dataUrl: `data:${mimeType};base64,${base64}` } }),
             });
           } else {
             await requestNativeServer(`/provider/respond/${requestId}`, {

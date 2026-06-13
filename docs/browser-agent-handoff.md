@@ -1,7 +1,7 @@
 # Browser Agent Handoff
 
 > Last updated: 2026-06-13
-> This document supersedes all previous versions. The architecture was completely replaced during the June 12-13 session.
+> This document covers the full system: native-server MCP gateway, Chrome extension (MCP relay + Chat UI), and agent-service.
 
 ---
 
@@ -9,146 +9,206 @@
 
 ```
 packages/
-  native-server/        # MCP gateway (Node.js HTTP server, no @mcp-b/native-server)
-    server.js           # Single-file gateway — the only file that matters here
-    .env                # Local env vars (gitignored)
-    .env.example        # Template
-    tokens.json         # Dynamic token store (gitignored)
-  chrome-extension/     # MV3 extension built with WXT
+  native-server/              # MCP gateway (Node.js HTTP, port 8080)
+    server.js                 # Single-file gateway
+    .env / .env.example
+    tokens.json               # Dynamic token store (gitignored)
+
+  agent-service/              # Chat backend (Node.js HTTP, port 3000)
+    server.js                 # HTTP server + routes registration
+    config.js                 # Runtime custom system prompt
+    routes/chat.js            # POST /chat — Vercel AI SDK streaming
+    providers/index.js        # Multi-provider factory (Anthropic / OpenAI / openai-compat)
+    mcp/client.js             # MCP Streamable HTTP client → native-server
+    memory/short-term.js      # In-memory conversation history per conversationId
+
+  chrome-extension/           # MV3 extension (WXT framework)
     entrypoints/
-      background/index.ts   # Service worker — provider relay + all browser tool logic
-      content.ts            # Content script — page MCP server discovery
-      sidepanel/            # React sidepanel UI
+      background/index.ts     # Service worker: browser tools + provider relay
+      content.ts              # Content script: page MCP server discovery
+      sidepanel/
+        App.tsx               # Root: init flow, SetupView gate, page routing
+        views/
+          ChatView.tsx        # Chat UI: streaming, ordered segments, tool blocks
+          SetupView.tsx       # First-run provider configuration wizard
         components/
-          ToolsPanel.tsx    # Main tool list panel (grouped display + toggles)
-    wxt.config.ts           # WXT config and manifest permissions
+          Settings.tsx        # Settings: native config + LLM provider + custom prompt
+          ToolsPopover.tsx    # Tool enable/disable popover
+          ToolsPanel.tsx      # Grouped tool list with toggles
+          TokensPanel.tsx     # Native-server token management
+        lib/
+          agentServiceClient.ts  # fetch helpers: health, provider config, system prompt
+          chatStore.ts           # Zustand store: messages, segments, loading state
+    wxt.config.ts             # Manifest + permissions
 ```
 
 ---
 
 ## Architecture Overview
 
-The system has **three layers** that cooperate at runtime:
-
 ```
-┌─────────────┐      MCP Streamable HTTP      ┌──────────────────────────────────┐
-│   Cursor /  │ ──────────────────────────── ▶│  native-server/server.js         │
-│  any MCP    │ ◀────────────────────────────  │  (gateway, port 8080 by default) │
-│   client    │                               └─────────────┬────────────────────┘
-└─────────────┘                                             │  HTTP provider relay
-                                                            │  POST /provider/register
-                                                            │  GET  /provider/queue (25 s long-poll)
-                                                            │  POST /provider/respond/:requestId
-                                                            ▼
-                                               ┌────────────────────────────────────────────────┐
-                                               │  Chrome Extension — background service worker  │
-                                               │                                                │
-                                               │  • Browser tools (tabs, navigation, DOM, …)   │
-                                               │  • Receives tool calls, executes, responds     │
-                                               │  • Tracks page MCP tools via content script    │
-                                               └────────────────────┬───────────────────────────┘
-                                                                    │  chrome.runtime.Port
-                                                                    │  name: "mcp-content-script-proxy"
-                                                                    ▼
-                                               ┌────────────────────────────────────────────────┐
-                                               │  Content script (content.ts)                  │
-                                               │  Injected into every http/https page           │
-                                               │  Connects to page MCP server via              │
-                                               │  TabClientTransport (@mcp-b/transports)        │
-                                               └────────────────────┬───────────────────────────┘
-                                                                    │  postMessage
-                                                                    ▼
-                                               ┌────────────────────────────────────────────────┐
-                                               │  Web page — MCP server (optional)             │
-                                               │  Implements TabServerTransport                 │
-                                               └────────────────────────────────────────────────┘
+┌─────────────┐      MCP Streamable HTTP      ┌─────────────────────────────────┐
+│   Cursor /  │ ──────────────────────────── ▶│  native-server/server.js        │
+│  any MCP    │ ◀────────────────────────────  │  (gateway, port 8080)           │
+│   client    │                               └──────────────┬──────────────────┘
+└─────────────┘                                              │  provider relay HTTP
+                                                             ▼
+┌──────────────────────────────────────┐     ┌─────────────────────────────────┐
+│  Chrome Extension sidepanel          │     │  agent-service (port 3000)      │
+│                                      │     │                                 │
+│  ChatView ──POST /chat──────────────▶│     │  POST /chat                     │
+│                                      │     │  ├─ streamText (Vercel AI SDK)  │
+│  App.tsx init:                       │     │  ├─ MCP client → native-server  │
+│  ├─ health check → provider status   │     │  ├─ Multi-provider LLM          │
+│  ├─ restore provider config          │     │  └─ Short-term memory           │
+│  └─ SetupView if not configured      │     │                                 │
+│                                      │     │  POST /provider-config          │
+│  Settings.tsx:                       │     │  POST /system-prompt            │
+│  ├─ LLM provider config              │     │  GET  /health                   │
+│  └─ Custom system prompt             │     └─────────────────────────────────┘
+└──────────────────────────────────────┘
+         │  provider relay
+         ▼
+┌─────────────────────────────────────────────────────┐
+│  Chrome Extension background service worker         │
+│  • Browser tools (~75 tools)                        │
+│  • Receives tool calls from native-server relay     │
+│  • Website tools via content script ports           │
+└─────────────────────────┬───────────────────────────┘
+                          │  chrome.runtime.Port
+                          ▼
+                 Content script (per page)
+                 Connects to page MCP server
 ```
-
-### Why this design replaced the old one
-
-The old design used `@mcp-b/native-server` which has a singleton `McpServer`. Cursor reconnects after reload call `McpServer.connect()` on the same singleton, causing `"Already connected to a transport"` crashes. The new design implements MCP Streamable HTTP directly with a per-session `mcpSessions` Map — no shared transport state at all.
-
-The old design also used native messaging (`chrome.runtime.connectNative`). The extension service worker sleeps after ~30 s of inactivity, breaking the native host connection. The new design uses an HTTP provider relay: the extension keeps itself alive by long-polling `GET /provider/queue` and re-registering via an alarm every 24 s.
 
 ---
 
-## Gateway (`packages/native-server/server.js`)
+## native-server (`packages/native-server/server.js`)
 
-### MCP Streamable HTTP protocol
+### MCP Streamable HTTP
 
-The gateway implements the 2024-11-05 spec directly:
+Implements the 2024-11-05 spec:
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `POST` | `/mcp` | `initialize` (no session header) → creates session, returns `mcp-session-id`. Any subsequent method with `mcp-session-id` header → routes to `handleMcpMethod`. |
-| `GET`  | `/mcp` | Opens SSE stream for server-initiated notifications. Session must exist. |
-| `DELETE` | `/mcp` | Closes session and its SSE stream. |
+| `POST` | `/mcp` | `initialize` → creates session. Subsequent calls with `mcp-session-id` → routes to handler. |
+| `GET`  | `/mcp` | SSE stream for server notifications. |
+| `DELETE` | `/mcp` | Closes session. |
 
-Sessions are stored in `mcpSessions = new Map()`. Stale sessions are evicted every 5 min (cutoff: 10 min idle).
-
-Supported MCP methods: `ping`, `tools/list`, `tools/call`.
-
-Capabilities advertised: `{ tools: { listChanged: true } }` — this is important; Cursor uses the SSE stream to receive `notifications/tools/list_changed` and refresh its tool cache automatically.
+Supported methods: `ping`, `tools/list`, `tools/call`. Broadcasts `notifications/tools/list_changed` when extension re-registers with new tools.
 
 ### Provider relay
 
-The extension registers itself and serves all tool calls. The gateway acts purely as a relay — it never runs tools itself.
+Extension registers and serves all tool calls. Gateway is a pure relay.
 
 ```
-Extension boot:
-  POST /provider/register  { tools: [...] }
-  → gateway stores in providerTools, broadcasts tools/list_changed SSE to all sessions
+Extension boot  → POST /provider/register { tools: [...] }
+                  gateway stores tools, broadcasts list_changed SSE
 
-Extension stays alive:
-  GET /provider/queue   (25 s long-poll timeout)
-  ← { type: "heartbeat" }          — no pending work
-  ← { type: "list_tools", requestId }    — gateway needs fresh tool list
-  ← { type: "call_tool", requestId, payload: { name, args } }
+Extension loop  → GET /provider/queue (25s long-poll)
+                ← { type: "heartbeat" }
+                ← { type: "call_tool", requestId, payload }
 
-Extension responds:
-  POST /provider/respond/:requestId  { status: "success", data: ... }
-                                     { status: "error", message: ... }
+Extension       → POST /provider/respond/:requestId { status, data }
 ```
-
-**Key behavior**: `askExtensionListTools()` returns the cached `providerTools` immediately if non-null. Only falls back to dispatching `list_tools` to the extension if the cache is empty (first call). When the extension re-registers (e.g. new website tools found), `providerTools` updates and the gateway broadcasts `notifications/tools/list_changed` to every active SSE session — Cursor then fetches the updated list on its own.
 
 ### Auth
 
-- Static tokens: `AUTH_TOKEN` or `AUTH_TOKENS` (comma-separated) env vars. These are admin tokens.
-- Dynamic tokens: managed at runtime via `GET/POST/DELETE /tokens` (admin only). Stored in `tokens.json`.
-- `ALLOW_NO_AUTH=true` bypasses all auth (local dev only).
-- Token sent as `Authorization: Bearer <token>` or `x-api-key: <token>`.
+- Static: `AUTH_TOKEN` / `AUTH_TOKENS` env vars
+- Dynamic: `GET/POST/DELETE /tokens` (admin only, stored in `tokens.json`)
+- `ALLOW_NO_AUTH=true` for local dev
 
-### Other endpoints
-
-| Path | Notes |
-|------|-------|
-| `GET /health` | Returns `{ status: "ok" }`. No auth required. |
-| `GET /ready` | Returns provider status + session count. Auth required. |
-| `GET /debug` | Full state dump (admin only). |
-| `GET/POST/DELETE /tokens` | Dynamic token management (admin only). |
-
-### Screenshot special-casing
-
-`toolResultToContent()` in the gateway detects `browser_take_screenshot` by name and rewraps `data.dataUrl` as MCP image content:
-
-```js
-{ type: "image", data: base64, mimeType: "image/png" }  // base64 without data: prefix
-```
-
-All other tools return `{ type: "text", text: JSON.stringify(data) }`.
-
-### Start the gateway
+### Start
 
 ```bash
-# With env file (recommended)
-node --env-file=.env server.js
-
-# Inline
-AUTH_TOKEN=my-secret-token PORT=8080 ENABLE_DEBUG_LOGS=true node server.js
+cd packages/native-server
+AUTH_TOKEN=my-secret PORT=8080 node server.js
 ```
 
-Required env vars: `AUTH_TOKEN` (or `AUTH_TOKENS`, or `ALLOW_NO_AUTH=true`).
+---
+
+## agent-service (`packages/agent-service/`)
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/chat` | Streaming chat (Vercel AI SDK data stream protocol) |
+| `GET`  | `/health` | Health + provider status: `{ status, provider: { configured, provider, model, toolsSupported } }` |
+| `POST` | `/provider-config` | Set LLM provider at runtime: `{ provider, apiKey, model, baseUrl, toolsSupported }` |
+| `GET/POST` | `/system-prompt` | Get/set custom system prompt appended to base prompt |
+
+### POST /chat
+
+Request:
+```json
+{
+  "messages": [{ "role": "user", "content": "..." }],
+  "conversationId": "uuid",
+  "enabledTools": ["browser_navigate_to", ...]
+}
+```
+
+Response: `text/plain; charset=utf-8` with `x-vercel-ai-data-stream: v1` header.
+
+Chunk format (Vercel AI SDK data stream protocol):
+```
+0:"text delta"           ← text
+9:{toolCallId,name,args} ← tool call
+a:{toolCallId,result}    ← tool result
+d:{finishReason,...}     ← finish
+3:"error message"        ← error (custom message via getErrorMessage)
+```
+
+### Streaming error handling
+
+`streamText` is called with `maxRetries: 0` (prevents cascade 429). Error messages are customized via `pipeDataStreamToResponse({ getErrorMessage })`:
+
+```js
+await result.pipeDataStreamToResponse(res, {
+  getErrorMessage: (error) => {
+    if (error?.statusCode === 429) {
+      const wait = error?.responseHeaders?.['ai-ratelimit-reset'];
+      return `Rate limit: API quota đã hết.${wait ? ` Thử lại sau ${Math.ceil(wait/60)} phút.` : ''}`;
+    }
+    return error?.message || 'An error occurred';
+  },
+});
+```
+
+This is the correct hook — the `onError` callback in `streamText` is notification-only, not for message customization.
+
+### Providers (`providers/index.js`)
+
+Supported: `anthropic`, `openai`, `openai-compat`
+
+Config via env (`PROVIDER`, `ANTHROPIC_API_KEY`, etc.) or runtime `POST /provider-config`.
+
+**`isToolsSupported()`**: `anthropic` and `openai` always support tools. `openai-compat` only if `toolsSupported: true` was set explicitly (opt-in for compatible models like Gemini Flash, off by default for models like Gemma).
+
+**VNGCloud Gemini compatibility**: `patchToolCallIndexFetch` wraps `fetch` to inject `"index":0` into streaming SSE chunks that are missing the `index` field (required by the AI SDK's type validation):
+
+```js
+// Patches: "type":"function" → "index":0,"type":"function"
+// Applied only when toolsSupported === true for openai-compat providers
+```
+
+### System prompts
+
+Two prompts in `routes/chat.js`:
+- `SYSTEM_PROMPT` (tools enabled): includes tool selection guide + escalation order (text → HTML → find_elements → screenshot)
+- `SYSTEM_PROMPT_NO_TOOLS` (tools disabled): plain-text only, explicitly says not to generate tool calls
+
+Custom instructions from Settings are appended as `## Custom instructions` section.
+
+### Start
+
+```bash
+cd packages/agent-service
+node server.js
+# or with env file:
+node --env-file=.env server.js
+```
 
 ---
 
@@ -162,204 +222,216 @@ bookmarks, history, downloads, sessions, tabGroups, topSites, notifications,
 cookies, clipboardRead, clipboardWrite
 ```
 
-Host permissions: `http://*/*`, `https://*/*`
+Host permissions: `<all_urls>`, `http://localhost/*`, `http://127.0.0.1/*`
 
-### Background service worker (`background/index.ts`)
+> **Note:** `<all_urls>` (not just `activeTab`) is required for `captureVisibleTab` (screenshot) when called outside a user gesture context (e.g. from agent tool call).
 
-#### Provider relay loop
+### App init flow (`App.tsx`)
 
-```typescript
-startProvider()         // POST /provider/register with allTools()
-  → isProviderRunning = true
-  → pollLoop() runs forever
+On extension open:
+1. `GET /health` on agent-service → check `provider.configured`
+2. If not configured → try restore from `chrome.storage.sync` (`agentProviderConfig`)
+3. If restore fails → show `SetupView`
+4. Push native config (`nativeServerUrl`, `authToken`) to agent-service
+5. Restore custom system prompt from storage → `POST /system-prompt`
 
-pollLoop():
-  pollOnce() → GET /provider/queue → handleProviderRequest(request)
-    if list_tools  → respond with allTools()
-    if call_tool   → executeBrowserTool() or executeWebsiteTool() → respond
+### SetupView (`views/SetupView.tsx`)
 
-// Keepalive: chrome.alarms "keepalive-provider" fires every 0.4 min
-// → calls startProvider() if isProviderRunning === false
-```
+First-run wizard shown when provider not configured:
+- Provider selector: `anthropic` / `openai` / `openai-compat`
+- Fields: API key, model, base URL (openai-compat only)
+- "Hỗ trợ function/tool calling" checkbox for openai-compat (default: **off**, safe for Gemma-type models)
+- Saves to `chrome.storage.sync` as `agentProviderConfig`
+- Calls `POST /provider-config` on agent-service
 
-`reRegisterProvider()` is called whenever the tool list changes (website tools added/removed). It POSTs the new tool list to `/provider/register`, which triggers the SSE broadcast.
+### Settings (`components/Settings.tsx`)
 
-#### Website tool tracking
+Three sections:
+1. **Native Server config** — URL + auth token
+2. **LLM Provider** — status badge + edit form (same fields as SetupView), allows re-config without going through SetupView
+3. **Custom Instructions** — textarea saved to `agentCustomSystemPrompt` in storage + `POST /system-prompt`
 
-```typescript
-tabEntries: Map<tabId, { tabId, domain, url, tools, port }>
-webToolIndex: Map<prefixedName, { tabId, originalName }>
-pendingWebCalls: Map<requestId, resolve>   // async bridge for page tool calls
-activeTabId: number | null                 // updated via chrome.tabs.onActivated
-```
+### Chat flow (`views/ChatView.tsx`)
 
-Website tool names are prefixed: `website_tool_{domain}_tab{tabId}_{toolName}`
-This makes them unique across tabs and routable back to the right content script port.
+**Ordered segments model**: Instead of `content: string + toolInvocations: []` (which loses timeline order), messages use:
 
-Port messages from content script → background:
-- `register-tools` / `tools-updated` → updates `tabEntries`, calls `reRegisterProvider()`
-- `tool-result` → resolves `pendingWebCalls` promise
+```ts
+type MessageSegment =
+  | { type: 'text'; content: string }   // coalesced adjacent text deltas
+  | { type: 'tool'; inv: ToolInvocation }
 
-Port messages background → content script:
-- `execute-tool` → content script calls `mcpClient.callTool()`
-- `request-tools-refresh` → content script re-lists tools
-
-#### Tool risk defaults
-
-Tools are classified by risk. High-risk tools are **disabled by default**. Users can override per-tool via the sidepanel toggle. Overrides persist in `chrome.storage.sync` under key `clawathon_tool_settings`.
-
-```typescript
-// Default-disabled (high/critical risk):
-browser_execute_script      // critical: arbitrary JS
-browser_get_cookies         // critical: auth tokens
-browser_set_cookie          // critical: session forgery
-browser_get_local_storage   // critical: JWT / app state
-browser_set_local_storage   // critical: data injection
-browser_get_session_storage // critical: session tokens
-browser_delete_cookie       // high
-browser_get_forms           // high: password field values
-browser_search_history      // high: privacy
-browser_add_history         // high
-browser_delete_history      // high: irreversible
-browser_get_top_sites       // high: privacy
-browser_get_recent_sessions // high: browsing patterns
-browser_restore_session     // high
-browser_download            // high: arbitrary files to disk
-browser_get_bookmark_tree   // high: full bookmark exposure
-browser_delete_bookmark     // high: irreversible
-browser_storage_clear       // high: destroys all extension data
-browser_clipboard_read      // high: captures passwords
-browser_take_screenshot     // high: captures sensitive screen
-```
-
-Logic: `isToolEnabled(name)` — checks `toolSettings` Map first (user override), falls back to `!DEFAULT_DISABLED.has(name)`.
-
-`allTools()` filters disabled tools before returning to provider relay. `GET_ALL_TOOLS` message returns each tool with `enabled: boolean` and `risk: 'critical' | 'high' | 'low'`.
-
-#### Browser tool categories (~75 tools, 15 groups)
-
-| Category | Key tools |
-|----------|-----------|
-| `tabs` | get_active_tab, list_tabs, focus/close/reload/duplicate/pin/mute/move/discard, zoom |
-| `windows` | list/create/close/update windows |
-| `navigation` | navigate, go_back, go_forward |
-| `bookmarks` | search, get_tree, create, delete |
-| `history` | search, add, delete, get_top_sites |
-| `downloads` | download, list, cancel, open, erase |
-| `storage` | get/set/remove/clear chrome.storage (local/sync/session) |
-| `sessions` | get_recent_sessions, restore_session |
-| `groups` | group/ungroup tabs, list/update tab groups |
-| `cookies` | get/set/delete cookies |
-| `interaction` | click, double_click, right_click, hover, type, select_option, check_element, scroll, focus_element, press_key, set_attribute |
-| `page` | get_content, get_metadata, find_elements, get_links, get_forms, get_computed_style, wait_for_element, get/set local_storage, get session_storage |
-| `scripting` | execute_script, inject_css, clipboard_write/read |
-| `media` | take_screenshot |
-| `notifications` | notify |
-
-`browser_type` uses the native input value setter to be React-compatible.
-
-`browser_execute_script` uses `eval()` in injected function context (not extension context) — build shows a warning, this is expected and safe.
-
-#### sidepanel message API
-
-| Message type | Direction | Purpose |
-|---|---|---|
-| `GET_CONFIG` | → bg | Read saved server config |
-| `SAVE_CONFIG` | → bg | Save config, resets session + provider |
-| `TEST_CONNECTION` | → bg | Health-check the gateway |
-| `RESET_MCP_SESSION` | → bg | Force new MCP session |
-| `GET_TOOLS` | → bg | Returns flat browser tools list (legacy) |
-| `CALL_TOOL` | → bg | Execute a browser tool directly |
-| `GET_ALL_TOOLS` | → bg | Returns grouped tools with enabled/risk per tool |
-| `TOGGLE_TOOL` | → bg | Enable/disable tool, re-registers provider |
-| `LIST_TOKENS` / `CREATE_TOKEN` / `DELETE_TOKEN` | → bg | Token management via gateway |
-
-### Content script (`content.ts`)
-
-Injected into every `http://` and `https://` page.
-
-1. Connects to background via `chrome.runtime.connect({ name: 'mcp-content-script-proxy' })`.
-2. Attempts to connect to the page's MCP server via `TabClientTransport({ targetOrigin: origin })` from `@mcp-b/transports`.
-3. **5-second timeout**: if no MCP server responds, silently exits (most pages won't have one).
-4. On success: calls `client.listTools()` → sends `register-tools` to background port.
-5. If the server advertises `listChanged` capability: installs `ToolListChangedNotificationSchema` handler → sends `tools-updated` on changes.
-6. Handles `execute-tool` from background → calls `mcpClient.callTool()` → sends `tool-result`.
-
-### Sidepanel (`ToolsPanel.tsx`)
-
-- Polls `GET_ALL_TOOLS` every 5 s to pick up new website tab connections.
-- **Browser tools section**: grouped by category (tabs, windows, navigation, …). Each group has a bulk toggle.
-- **Website tools section**: one group per connected tab, labeled by domain, URL shown as subtitle.
-- Status badges: `Active` (green) = currently focused tab, `Open Tab` (blue) = background tab.
-- Per-tool display: short name (strips `browser_` prefix for browser tools, shows `originalName` for website tools), risk emoji (🔴/🟠 for high-risk tools), toggle switch.
-- Expand any tool to see description, fill parameters, and call it directly from the panel.
-- `enabled` count shown in header per group.
-
----
-
-## Cursor MCP Configuration
-
-```json
-{
-  "mcpServers": {
-    "browser-agent": {
-      "type": "http",
-      "url": "http://127.0.0.1:8080/mcp",
-      "headers": {
-        "Authorization": "Bearer <your-token>"
-      }
-    }
-  }
+interface ChatMessage {
+  content: string;         // concatenated text, used for history sent to server
+  segments?: MessageSegment[];  // ordered segments, used for display
 }
 ```
 
-Cursor establishes a persistent SSE connection (`GET /mcp`) after `initialize`. When new website tools are discovered by the extension, the gateway sends `notifications/tools/list_changed` over that SSE stream and Cursor automatically refreshes its tool list — no manual refresh needed.
+Stream parsing builds `segments[]` in arrival order: text chunks coalesce into the last text segment; tool-call pushes a new tool segment; tool-result updates it in-place by stored index. This ensures tool blocks appear at the exact position in the conversation where they were called, not pushed to the bottom.
+
+**Rendering**:
+- User messages → `UserBubble` (right-aligned, accent color)
+- Assistant messages → `AssistantMessage` (flat, no bubble) — renders segments in order: Markdown for text, `ToolCallBlock` for tools
+
+**503 recovery**: If agent-service returns `{ error: "provider_not_configured" }`, ChatView re-pushes provider config from storage and retries the request once.
+
+### Tool risk defaults
+
+Tools default-disabled (high/critical):
+`execute_script`, `get/set_cookies`, `get/set_local_storage`, `get_session_storage`, `delete_cookie`, `get_forms`, `search_history`, `add_history`, `delete_history`, `get_top_sites`, `get_recent_sessions`, `restore_session`, `download`, `get_bookmark_tree`, `delete_bookmark`, `storage_clear`, `clipboard_read`
+
+`browser_take_screenshot` is **medium** risk → **default ON** (required for agent to visually inspect pages).
 
 ---
 
 ## Build & Run
 
 ```bash
-# Build extension
-pnpm --dir packages/chrome-extension build
-
-# Start gateway (set your own token)
+# 1. Start native-server
 cd packages/native-server
 AUTH_TOKEN=my-secret PORT=8080 node server.js
+
+# 2. Start agent-service (provider can be set via UI, no env needed)
+cd packages/agent-service
+node server.js
+
+# 3. Build extension
+cd packages/chrome-extension
+npm run build
+# or pnpm --dir packages/chrome-extension build
+
+# 4. Load in Chrome
+# chrome://extensions → Developer Mode → Load unpacked
+# → packages/chrome-extension/dist/chrome-mv3
 ```
 
-Load extension: `chrome://extensions` → Developer Mode → Load unpacked → `packages/chrome-extension/dist/chrome-mv3`
+---
+
+## Known Issues & Pending Work
+
+### 🔴 Stream truncation mid-task (Qwen / openai-compat models)
+
+**Triệu chứng:** Model (e.g. `qwen/qwen3-5-27b`) stream được một hồi rồi dừng đột ngột dù task chưa hoàn thành.
+
+**Nguyên nhân nghi ngờ (chưa xác nhận):**
+1. Context window đầy → `finishReason: "length"` (không phải `"stop"`)
+2. Provider-side HTTP timeout (~30–60s) cắt stream
+3. `maxSteps: 10` bị exhaust khi nhiều tool calls liên tiếp
+
+**Điều tra cần làm:**
+- Log `finishReason` và `usage.totalTokens` từ `d:` finish chunk trong ChatView
+- Nếu `"length"` → implement context compression (Phase 6.2)
+- Nếu timeout → add retry với backoff cho `fetch` trong ChatView
+
+Xem đặc tả đầy đủ tại Phase 6 trong `chat-agent-implementation-plan.md`.
 
 ---
 
-## Known Nuances
+### 🟡 Skeleton loading chưa có
 
-### Service worker sleep
+Khi model đang suy nghĩ (stream gửi đi nhưng chưa nhận chunk đầu tiên), UI chỉ hiện `TypingDots`. Cần shimmer skeleton đầy đủ hơn.
 
-Chrome may suspend the service worker after ~30 s of inactivity. The `keepalive-provider` alarm (every 0.4 min) calls `startProvider()` to re-register if `isProviderRunning` has been reset. The long-poll itself also keeps the worker alive while it has an inflight `fetch`.
-
-### Content script reconnect after SW restart
-
-If the service worker restarts, all in-memory state (`tabEntries`, `webToolIndex`) is lost. Content scripts' ports are disconnected; they do not automatically reconnect — they only run once at page load. Existing page tabs will lose their website tools until the page is reloaded.
-
-This is a known MV3 limitation. A future fix would have content scripts retry connection with backoff when the port disconnects.
-
-### Tool names and routing
-
-Website tools are prefixed with `website_tool_{sanitized_domain}_tab{tabId}_{sanitized_name}`. The `webToolIndex` map routes the prefixed name back to `{ tabId, originalName }` for execution. If the background restarts and the index is empty, tool calls for website tools will fail until the page reloads (same SW restart issue above).
-
-### Cookie permission and host permissions
-
-Cookies require `cookies` permission plus host permissions for the target domain. The extension requests `http://*/*` and `https://*/*` so all cookie access is covered. These are broad permissions — only the explicitly enabled cookie tools are exposed to the AI agent.
+**Plan (Phase 5.1):** Track `isWaitingFirstChunk` state. Hiện `<SkeletonMessage>` (3 dòng animated gradient) cho đến khi có `0:` text chunk đầu tiên.
 
 ---
 
-## Files Most Relevant for Next Work
+### 🟡 Không có chat sessions / history
 
-| File | Why |
-|------|-----|
-| `packages/native-server/server.js` | Full gateway implementation |
-| `packages/chrome-extension/entrypoints/background/index.ts` | All tool logic, provider relay, risk defaults |
-| `packages/chrome-extension/entrypoints/content.ts` | Page MCP discovery |
-| `packages/chrome-extension/entrypoints/sidepanel/components/ToolsPanel.tsx` | Sidepanel UI |
-| `packages/chrome-extension/wxt.config.ts` | Permissions |
+Mỗi lần clear hoặc đóng panel, lịch sử mất hoàn toàn. Không có cách mở lại cuộc hội thoại cũ.
+
+**Plan (Phase 5.2):**
+- Lưu sessions vào `chrome.storage.local` (max 50)
+- Header: nút `+` (new chat) + `⏱` (history panel)
+- `clearHistory` → archive session cũ, tạo session mới
+
+---
+
+### 🟡 Input không có message history navigation
+
+Không thể nhấn ↑↓ để browse lại các tin nhắn đã gửi để sửa/gửi lại.
+
+**Plan (Phase 5.3):** `sentHistory: string[]` state trong ChatView, lưu vào `chrome.storage.local`. `ArrowUp`/`ArrowDown` khi textarea focused.
+
+---
+
+### 🟡 Tab Tokens tách rời khỏi Settings
+
+Token management (`TokensPanel`) là một tab riêng trong nav. Nên gộp vào Settings dưới group **Security**.
+
+**Plan (Phase 5.4):** Nhúng `TokensPanel` vào `Settings.tsx`, xóa tab `🔑` khỏi `App.tsx` nav.
+
+---
+
+### ❌ Phase 3 — Long-term memory
+
+`memory/long-term.js` là stub. SQLite + sqlite-vec chưa implement. `better-sqlite3` native module đã build thành công.
+
+**Plan:** Embed user messages → semantic search top-5 → inject vào system prompt. Summarize conversations khi idle 5 phút.
+
+---
+
+### ❌ Phase 4 — Custom MCP Servers
+
+Chưa bắt đầu. Cho phép user kết nối thêm MCP servers bên ngoài native-server từ Settings UI.
+
+**Plan:** Settings group "External MCP Connections", `mcp/client.js` mở rộng thành multi-client Map. Chi tiết tại Phase 4 trong `chat-agent-implementation-plan.md`.
+
+---
+
+### ❌ Phase 5 — Pre-defined Agent Skills
+
+Chưa bắt đầu. Agent-service expose danh sách skills có sẵn (pre-defined bundles gồm system prompt + required tools + target URLs). User tick chọn skill trong Chat UI → agent tự có năng lực phù hợp mà không cần prompt thủ công.
+
+**Use cases:** Marketing Campaign, VNG Internal Tools, Data Analyst, Web Researcher, ...
+
+**Plan:**
+- `GET /skills` endpoint trả list skill metadata
+- `POST /chat` nhận thêm `activeSkills: string[]`, inject systemPrompt + auto-enable requiredTools
+- `SkillsChipBar` component ngay trên input box — chips toggle, `+ More` dropdown
+- Auto-suggest banner khi tab URL match `skill.targetUrls`
+- Settings group "Agent Skills" để enable/disable built-ins và add custom skill JSON
+
+Chi tiết đầy đủ tại Phase 5 trong `chat-agent-implementation-plan.md`.
+
+---
+
+### ❌ Phase 6 — Auto context compression
+
+Khi conversation dài (>70% context window), cần tự động summarize messages cũ và giữ N messages gần nhất — tương tự cơ chế của Claude.
+
+**Plan:** `compressHistory()` trong `routes/chat.js`, trigger theo `usage.totalTokens`. Chi tiết tại Phase 6 trong `chat-agent-implementation-plan.md`.
+
+---
+
+### ⚠️ VNGCloud Gemini rate limits (429)
+
+VNGCloud Gemini Flash 2.5 có rate limit thấp. Khi agent gọi nhiều tool calls liên tiếp, 429 xảy ra mid-stream. Error hiện đúng trên UI qua `getErrorMessage`. Chưa có retry/backoff tự động.
+
+`ai-ratelimit-reset` header (seconds) dùng để tính thời gian chờ hiển thị cho user.
+
+---
+
+### ⚠️ openai-compat toolsSupported opt-in UX
+
+Checkbox "Hỗ trợ function/tool calling" mặc định **off**. User có model capable (Gemini Flash, GPT-4o qua custom URL) phải biết tự check. Chưa có auto-detect.
+
+---
+
+### ⚠️ Content script không auto-reconnect sau SW restart
+
+Nếu background service worker restart (Chrome có thể suspend sau ~30s idle), toàn bộ `tabEntries` và `webToolIndex` bị xóa. Content scripts không tự reconnect — website tools biến mất cho đến khi reload trang.
+
+**Workaround:** Reload trang sau khi service worker restart.
+
+---
+
+## Key Gotchas
+
+| Gotcha | Detail |
+|--------|--------|
+| `<all_urls>` required for screenshot | `activeTab` only works with user gesture. `captureVisibleTab` from agent context needs `<all_urls>`. |
+| VNGCloud missing `index` in tool_call SSE | `patchToolCallIndexFetch` patches this. Only applied when `toolsSupported === true` for openai-compat. |
+| `maxRetries: 0` in streamText | AI SDK defaults to 3 retries with no backoff — cascades 429 into service crash. Must be 0. |
+| `getErrorMessage` vs `onError` | `streamText`'s `onError` is notification-only. To customize the `3:` error chunk, use `pipeDataStreamToResponse({ getErrorMessage })`. Manual `res.write()` in `onError` races with SDK's stream management. |
+| Conversation history sent by client | Client (Zustand) sends full history. Server must NOT prepend its own stored history — that duplicates messages and confuses the model. `const allMessages = messages;` — no prepend. |
+| `onFinish` guard | `response.messages` can be `undefined` on error. Always guard: `if (response?.messages?.length)`. |
+| Gemma spontaneous tool calls | Gemma generates tool-call tokens even with no tools defined. Fix: `SYSTEM_PROMPT_NO_TOOLS` explicitly says "do not call functions", and `isToolsSupported()` returns false for openai-compat unless opted in. |

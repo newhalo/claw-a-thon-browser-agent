@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import ChatView from './views/ChatView';
 import SetupView from './views/SetupView';
 import Settings from './components/Settings';
-import TokensPanel from './components/TokensPanel';
 import {
   getAgentServiceConfig,
   checkAgentServiceHealth,
@@ -13,7 +12,7 @@ import {
 } from './lib/agentServiceClient';
 import './App.css';
 
-type Page = 'chat' | 'settings' | 'tokens';
+type Page = 'chat' | 'settings';
 
 interface NativeConfig {
   nativeServerUrl?: string;
@@ -26,6 +25,7 @@ interface ProviderConfig {
   model?: string;
   baseUrl?: string;
   toolsSupported?: boolean;
+  visionSupported?: boolean;
 }
 
 function App() {
@@ -92,7 +92,7 @@ function App() {
       chrome.storage.sync.get(['agentProviderConfig'], async (result) => {
         const saved: ProviderConfig = result.agentProviderConfig;
         if (!saved?.provider || !saved?.apiKey) { resolve(false); return; }
-        const ok = await pushProviderConfig(url, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported);
+        const ok = await pushProviderConfig(url, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported);
         resolve(ok);
       });
     });
@@ -146,12 +146,6 @@ function App() {
             title="Chat"
           >💬</button>
           <button
-            className={`nav-btn ${currentPage === 'tokens' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('tokens')}
-            disabled={!isNativeConfigured}
-            title="Tokens"
-          >🔑</button>
-          <button
             className={`nav-btn ${currentPage === 'settings' ? 'active' : ''}`}
             onClick={() => setCurrentPage('settings')}
             title="Settings"
@@ -178,9 +172,6 @@ function App() {
             </div>
             {currentPage === 'settings' && (
               <Settings onConfigSaved={handleConfigSaved} />
-            )}
-            {currentPage === 'tokens' && isNativeConfigured && (
-              <TokensPanel />
             )}
           </>
         )}

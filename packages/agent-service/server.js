@@ -2,7 +2,9 @@ import http from 'node:http';
 import { listTools, resetSession, setMcpConfig, getMcpConfig } from './mcp/client.js';
 import { setProviderConfig, getProviderStatus } from './providers/index.js';
 import { setCustomSystemPrompt, getCustomSystemPrompt } from './config.js';
-import chatRoute from './routes/chat.js';
+import chatRoute, { screenshotStore } from './routes/chat.js';
+import { PREDEFINED_MODELS } from './models.js';
+import { getSkillsPublic } from './skills/registry.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
@@ -80,12 +82,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Models catalog ───────────────────────────────────────────────────────
+  if (url.pathname === '/models' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(PREDEFINED_MODELS));
+    return;
+  }
+
+  // ── Skills catalog ───────────────────────────────────────────────────────
+  if (url.pathname === '/skills' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getSkillsPublic()));
+    return;
+  }
+
   // ── LLM Provider config (pushed from extension setup UI) ─────────────────
   if (url.pathname === '/provider-config' && req.method === 'POST') {
     try {
-      const { provider, apiKey, model, baseUrl, toolsSupported } = await readBody(req);
+      const { provider, apiKey, model, baseUrl, toolsSupported, visionSupported } = await readBody(req);
       if (!provider || !apiKey) { res.writeHead(400).end('provider and apiKey required'); return; }
-      setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported });
+      setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, status: getProviderStatus() }));
     } catch { res.writeHead(400).end('Invalid JSON'); }
@@ -106,6 +122,18 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/system-prompt' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ systemPrompt: getCustomSystemPrompt() }));
+    return;
+  }
+
+  // ── Screenshot store ─────────────────────────────────────────────────────
+  const screenshotMatch = url.pathname.match(/^\/screenshot\/([a-f0-9-]+)$/);
+  if (screenshotMatch && req.method === 'GET') {
+    const entry = screenshotStore.get(screenshotMatch[1]);
+    if (!entry) { res.writeHead(404).end('Not found'); return; }
+    const [, mimeType, b64] = entry.dataUrl.match(/^data:([^;]+);base64,(.+)$/) || [];
+    const buf = Buffer.from(b64, 'base64');
+    res.writeHead(200, { 'Content-Type': mimeType, 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=600' });
+    res.end(buf);
     return;
   }
 

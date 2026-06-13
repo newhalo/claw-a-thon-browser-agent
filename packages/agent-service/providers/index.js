@@ -54,36 +54,40 @@ const envConfig = {
   apiKey: process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.CUSTOM_API_KEY || null,
   model: process.env.ANTHROPIC_MODEL || process.env.OPENAI_MODEL || process.env.CUSTOM_MODEL || null,
   baseUrl: process.env.CUSTOM_BASE_URL || null,
-  // openai-compat only: set CUSTOM_TOOLS_SUPPORTED=true if model supports function calling
   toolsSupported: process.env.CUSTOM_TOOLS_SUPPORTED === 'true' ? true : null,
+  visionSupported: process.env.CUSTOM_VISION_SUPPORTED === 'true' ? true : null,
 };
 
-export function setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported }) {
+export function setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported }) {
   runtimeConfig = {
     provider,
     apiKey,
     model: model || null,
     baseUrl: baseUrl || null,
     toolsSupported: toolsSupported ?? null,
+    visionSupported: visionSupported ?? null,
   };
   _instance = null;
-  console.log(`[provider] Runtime config updated — provider: ${provider}${toolsSupported != null ? `, tools: ${toolsSupported}` : ''}`);
+  console.log(`[provider] Runtime config updated — provider: ${provider}${toolsSupported != null ? `, tools: ${toolsSupported}` : ''}${visionSupported != null ? `, vision: ${visionSupported}` : ''}`);
 }
 
 export function getProviderStatus() {
   const cfg = runtimeConfig || envConfig;
   if (!cfg.provider || !cfg.apiKey) return { configured: false, provider: cfg.provider || null };
-  return { configured: true, provider: cfg.provider, model: cfg.model, toolsSupported: cfg.toolsSupported };
+  return { configured: true, provider: cfg.provider, model: cfg.model, toolsSupported: cfg.toolsSupported, visionSupported: cfg.visionSupported };
 }
 
-/**
- * Returns true when the active provider can handle function/tool calling.
- * anthropic and openai always support it; openai-compat only if explicitly opted-in.
- */
 export function isToolsSupported() {
   const cfg = runtimeConfig || envConfig;
   if (cfg.provider === 'anthropic' || cfg.provider === 'openai') return true;
   if (cfg.provider === 'openai-compat') return cfg.toolsSupported === true;
+  return false;
+}
+
+export function isVisionSupported() {
+  const cfg = runtimeConfig || envConfig;
+  if (cfg.provider === 'anthropic' || cfg.provider === 'openai') return true;
+  if (cfg.provider === 'openai-compat') return cfg.visionSupported === true;
   return false;
 }
 

@@ -80,7 +80,7 @@ export async function listTools(forceRefresh = false) {
   });
 
   if (!res.ok) {
-    if (res.status === 404 || res.status === 401) {
+    if (res.status === 400 || res.status === 404 || res.status === 401) {
       sessionId = null;
       await initSession();
       return listTools(true);
@@ -109,7 +109,7 @@ export async function callTool(name, args) {
   });
 
   if (!res.ok) {
-    if (res.status === 404 || res.status === 401) {
+    if (res.status === 400 || res.status === 404 || res.status === 401) {
       sessionId = null;
       await initSession();
       return callTool(name, args);

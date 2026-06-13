@@ -372,9 +372,10 @@ function toolResultToContent(toolName, payload) {
   // Screenshot: return as image content
   if (toolName === "browser_take_screenshot" && data?.dataUrl) {
     const dataUrl = String(data.dataUrl);
-    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+    const mimeType = dataUrl.match(/^data:([^;]+);base64,/)?.[1] || "image/png";
+    const base64 = dataUrl.replace(/^data:[^;]+;base64,/, "");
     return {
-      content: [{ type: "image", data: base64, mimeType: "image/png" }],
+      content: [{ type: "image", data: base64, mimeType }],
       isError: false,
     };
   }
@@ -666,6 +667,15 @@ function startGatewayServer() {
     sendJson(res, 404, { error: "Not Found" });
   });
 
+  // Track open connections so we can destroy them on shutdown
+  const openConnections = new Set();
+  server.on("connection", (socket) => {
+    openConnections.add(socket);
+    socket.on("close", () => openConnections.delete(socket));
+  });
+  // Raise limit — each keep-alive connection adds a close listener internally
+  server.setMaxListeners(50);
+
   server.listen(PORT, () => {
     logInfo("gateway listening", {
       url: `http://0.0.0.0:${PORT}`,
@@ -676,8 +686,23 @@ function startGatewayServer() {
     });
   });
 
-  process.on("SIGINT", () => server.close(() => process.exit(0)));
-  process.on("SIGTERM", () => server.close(() => process.exit(0)));
+  let shuttingDown = false;
+  function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logInfo(`${signal} received — shutting down`);
+    // Destroy open connections so server.close() can complete immediately
+    for (const socket of openConnections) socket.destroy();
+    server.close(() => {
+      logInfo("server closed");
+      process.exit(0);
+    });
+    // Force exit after 3 s if something still hangs
+    setTimeout(() => process.exit(1), 3000).unref();
+  }
+
+  process.once("SIGINT", () => shutdown("SIGINT"));
+  process.once("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────

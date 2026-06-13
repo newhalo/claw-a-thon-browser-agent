@@ -1,45 +1,5 @@
-import React, { useState } from 'react';
-import { pushNativeConfigToAgentService, pushProviderConfig } from '../lib/agentServiceClient';
-
-type Provider = 'anthropic' | 'openai' | 'openai-compat';
-
-interface ProviderMeta {
-  label: string;
-  icon: string;
-  placeholder: string;
-  modelPlaceholder: string;
-  defaultModel: string;
-  needsBaseUrl: boolean;
-  hint?: string;
-}
-
-const PROVIDERS: Record<Provider, ProviderMeta> = {
-  anthropic: {
-    label: 'Anthropic (Claude)',
-    icon: '🟣',
-    placeholder: 'sk-ant-api03-…',
-    modelPlaceholder: 'claude-sonnet-4-6',
-    defaultModel: 'claude-sonnet-4-6',
-    needsBaseUrl: false,
-  },
-  openai: {
-    label: 'OpenAI (GPT)',
-    icon: '🟢',
-    placeholder: 'sk-…',
-    modelPlaceholder: 'gpt-4o',
-    defaultModel: 'gpt-4o',
-    needsBaseUrl: false,
-  },
-  'openai-compat': {
-    label: 'Custom / OpenAI-compat',
-    icon: '⚙️',
-    placeholder: 'your-api-key',
-    modelPlaceholder: 'model-name',
-    defaultModel: '',
-    needsBaseUrl: true,
-    hint: 'Tương thích: OpenRouter, LiteLLM, VNGCloud, Ollama, v.v.',
-  },
-};
+import React, { useEffect, useState } from 'react';
+import { pushNativeConfigToAgentService, pushProviderConfig, fetchModels, type PredefinedModel } from '../lib/agentServiceClient';
 
 interface SetupViewProps {
   agentServiceUrl: string;
@@ -49,46 +9,60 @@ interface SetupViewProps {
 }
 
 export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuthToken, onDone }: SetupViewProps) {
-  const [provider, setProvider] = useState<Provider>('anthropic');
+  const [models, setModels] = useState<PredefinedModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [toolsSupported, setToolsSupported] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const meta = PROVIDERS[provider];
+  useEffect(() => {
+    fetchModels(agentServiceUrl).then(list => {
+      setModels(list);
+      const def = list.find(m => m.default) ?? list[0];
+      if (def) setSelectedModelId(def.id);
+    });
+    // Pre-fill saved API key if any
+    chrome.storage.sync.get(['agentProviderConfig'], result => {
+      if (result.agentProviderConfig?.apiKey) setApiKey(result.agentProviderConfig.apiKey);
+    });
+  }, [agentServiceUrl]);
+
+  const selectedModel = models.find(m => m.id === selectedModelId);
+
+  // Group models by category for the dropdown
+  const categories = Array.from(new Set(models.map(m => m.category)));
 
   const handleSave = async () => {
     setError('');
     if (!apiKey.trim()) { setError('API key là bắt buộc'); return; }
-    if (provider === 'openai-compat' && !baseUrl.trim()) { setError('Base URL là bắt buộc cho custom provider'); return; }
+    if (!selectedModel) { setError('Chọn model trước'); return; }
 
     setSaving(true);
     try {
-      // 1. Push native-server config
       if (nativeServerUrl) {
         await pushNativeConfigToAgentService(agentServiceUrl, nativeServerUrl, nativeAuthToken);
       }
 
-      // 2. Push provider config
-      const effectiveToolsSupported = provider !== 'openai-compat' ? undefined : toolsSupported;
       const ok = await pushProviderConfig(
-        agentServiceUrl, provider, apiKey.trim(),
-        model.trim() || meta.defaultModel || undefined,
-        provider === 'openai-compat' ? baseUrl.trim() : undefined,
-        effectiveToolsSupported,
+        agentServiceUrl,
+        selectedModel.provider,
+        apiKey.trim(),
+        selectedModel.id,
+        selectedModel.baseUrl,
+        selectedModel.toolsSupported,
+        selectedModel.visionSupported,
       );
       if (!ok) { setError('Agent service không phản hồi'); return; }
 
-      // 3. Save to extension storage for next session
       chrome.storage.sync.set({
         agentProviderConfig: {
-          provider,
+          modelId: selectedModel.id,
+          provider: selectedModel.provider,
           apiKey: apiKey.trim(),
-          model: model.trim() || meta.defaultModel || '',
-          baseUrl: baseUrl.trim(),
-          toolsSupported: effectiveToolsSupported,
+          model: selectedModel.id,
+          baseUrl: selectedModel.baseUrl ?? '',
+          toolsSupported: selectedModel.toolsSupported,
+          visionSupported: selectedModel.visionSupported,
         }
       });
 
@@ -105,82 +79,52 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
       display: 'flex', flexDirection: 'column', height: '100%',
       background: 'var(--bg-base)', overflow: 'auto',
     }}>
-      {/* Header */}
-      <div style={{
-        padding: '20px 20px 0',
-        textAlign: 'center',
-      }}>
+      <div style={{ padding: '20px 20px 0', textAlign: 'center' }}>
         <div style={{ fontSize: 32, marginBottom: 10 }}>🚀</div>
         <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)' }}>
           Cấu hình Agent
         </h2>
         <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-          Chọn LLM provider để bắt đầu chat với Browser Agent.
+          Chọn model và nhập API key để bắt đầu.
         </p>
       </div>
 
       <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-        {/* Provider selector */}
+        {/* Model selector */}
         <div>
-          <label style={labelStyle}>LLM Provider</label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {(Object.entries(PROVIDERS) as [Provider, ProviderMeta][]).map(([key, m]) => (
-              <button
-                key={key}
-                onClick={() => { setProvider(key); setApiKey(''); setModel(''); setBaseUrl(''); setToolsSupported(false); }}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '9px 12px', borderRadius: 8, cursor: 'pointer',
-                  border: `1.5px solid ${provider === key ? 'var(--accent)' : 'var(--border)'}`,
-                  background: provider === key ? 'var(--accent-light)' : 'var(--bg-elevated)',
-                  color: 'var(--text-primary)', textAlign: 'left',
-                  transition: 'all 0.15s',
-                }}
-              >
-                <span style={{ fontSize: 16 }}>{m.icon}</span>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{m.label}</div>
-                  {m.hint && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{m.hint}</div>}
-                </div>
-                {provider === key && (
-                  <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: 14 }}>✓</span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Base URL (openai-compat only) */}
-        {meta.needsBaseUrl && (
-          <div>
-            <label style={labelStyle}>Base URL</label>
-            <input
-              value={baseUrl}
-              onChange={e => setBaseUrl(e.target.value)}
-              placeholder="https://api.openrouter.ai/v1"
-              style={inputStyle}
-            />
-          </div>
-        )}
-
-        {/* Tool calling opt-in (openai-compat only) */}
-        {meta.needsBaseUrl && (
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={toolsSupported}
-              onChange={e => setToolsSupported(e.target.checked)}
-              style={{ marginTop: 2, accentColor: 'var(--accent)', width: 14, height: 14, flexShrink: 0 }}
-            />
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>Hỗ trợ function/tool calling</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                Bật nếu model hỗ trợ OpenAI tool calling (claude, gpt-4o, llama-3.1…). Để tắt với gemma, mistral cũ.
-              </div>
+          <label style={labelStyle}>Model</label>
+          {models.length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>
+              Đang tải danh sách model…
             </div>
-          </label>
-        )}
+          ) : (
+            <select
+              value={selectedModelId}
+              onChange={e => setSelectedModelId(e.target.value)}
+              style={selectStyle}
+            >
+              {categories.map(cat => (
+                <optgroup key={cat} label={cat}>
+                  {models.filter(m => m.category === cat).map(m => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          )}
+
+          {/* Model capability badges */}
+          {selectedModel && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
+              <CapBadge label="Tools" active={selectedModel.toolsSupported} />
+              <CapBadge label="Vision" active={selectedModel.visionSupported} />
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 2 }}>
+                {selectedModel.provider}{selectedModel.baseUrl ? ` · ${new URL(selectedModel.baseUrl).hostname}` : ''}
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* API Key */}
         <div>
@@ -189,24 +133,10 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
             type="password"
             value={apiKey}
             onChange={e => setApiKey(e.target.value)}
-            placeholder={meta.placeholder}
+            placeholder="your-api-key"
             style={inputStyle}
             autoComplete="off"
           />
-        </div>
-
-        {/* Model (optional) */}
-        <div>
-          <label style={labelStyle}>Model <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(tuỳ chọn)</span></label>
-          <input
-            value={model}
-            onChange={e => setModel(e.target.value)}
-            placeholder={meta.modelPlaceholder}
-            style={inputStyle}
-          />
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-            Để trống dùng mặc định: <code style={{ background: 'var(--bg-hover)', padding: '1px 4px', borderRadius: 3 }}>{meta.defaultModel || '—'}</code>
-          </div>
         </div>
 
         {error && (
@@ -214,14 +144,12 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
             padding: '8px 12px', borderRadius: 7, fontSize: 12,
             background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
             color: 'var(--error)',
-          }}>
-            ⚠️ {error}
-          </div>
+          }}>⚠️ {error}</div>
         )}
 
         <button
           onClick={handleSave}
-          disabled={saving || !apiKey.trim()}
+          disabled={saving || !apiKey.trim() || !selectedModel}
           style={{
             padding: '10px', borderRadius: 9, border: 'none',
             background: saving || !apiKey.trim() ? 'var(--bg-active)' : 'var(--accent)',
@@ -234,13 +162,25 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
           {saving ? 'Đang lưu…' : '✓ Bắt đầu Chat'}
         </button>
 
-        {/* Status */}
         <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.6 }}>
           API key được lưu trong extension storage của trình duyệt.<br />
           Không gửi đi đâu ngoài agent-service chạy local.
         </div>
       </div>
     </div>
+  );
+}
+
+function CapBadge({ label, active }: { label: string; active: boolean }) {
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+      background: active ? 'rgba(16,185,129,0.1)' : 'rgba(156,163,175,0.1)',
+      color: active ? 'var(--success, #10b981)' : 'var(--text-muted)',
+      border: `1px solid ${active ? 'rgba(16,185,129,0.25)' : 'rgba(156,163,175,0.2)'}`,
+    }}>
+      {active ? '✓' : '✗'} {label}
+    </span>
   );
 }
 
@@ -255,5 +195,13 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid var(--border)', borderRadius: 7,
   fontSize: 13, fontFamily: 'inherit',
   background: 'var(--bg-elevated)', color: 'var(--text-primary)',
-  outline: 'none',
+  outline: 'none', boxSizing: 'border-box',
+};
+
+const selectStyle: React.CSSProperties = {
+  width: '100%', padding: '8px 11px',
+  border: '1px solid var(--border)', borderRadius: 7,
+  fontSize: 13, fontFamily: 'inherit',
+  background: 'var(--bg-elevated)', color: 'var(--text-primary)',
+  outline: 'none', cursor: 'pointer',
 };

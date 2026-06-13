@@ -14,42 +14,75 @@
 import { streamText, tool } from 'ai';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
-import { getModel, getProviderStatus, isToolsSupported } from '../providers/index.js';
+import { getModel, getProviderStatus, isToolsSupported, isVisionSupported } from '../providers/index.js';
 import { getCustomSystemPrompt } from '../config.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
+import { getSkillById } from '../skills/registry.js';
+
+// Screenshot store — keeps base64 images out of LLM context.
+// execute() stores the dataUrl here and returns a short [screenshot:ID] reference.
+// GET /screenshot/:id serves it back to the UI.
+export const screenshotStore = new Map(); // id → { dataUrl, createdAt }
+
+// Prune screenshots older than 10 minutes to avoid memory leaks
+setInterval(() => {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [id, entry] of screenshotStore) {
+    if (entry.createdAt < cutoff) screenshotStore.delete(id);
+  }
+}, 60_000);
 
 const DATE_STR = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
 // Full system prompt used when the provider supports function/tool calling
 const SYSTEM_PROMPT = `You are a browser automation agent with access to browser tools via MCP (Model Context Protocol).
 
-## Tool selection guide
-- User asks about current page content/areas/elements → call browser_get_page_content (format: "text") FIRST, then summarize
-- Text doesn't reveal the UI element (e.g. a menu item only visible on screen) → take a screenshot with browser_take_screenshot, then describe what you see
-- User asks about current tab URL/title only → browser_get_active_tab or browser_get_page_info
-- Need to discover all interactive elements (buttons, links, nav items) → browser_find_elements with selector "a,button,[role='menuitem'],[role='tab'],nav *"
-- Website-specific tools (name starts with website_tool_) give richer structured data — prefer them over generic browser tools when available for the current site
-- For multi-step tasks: get context first, then act, then confirm result
+## Strategy by task type
 
-## When text is not enough
-If page text content doesn't contain the information the user asked about (e.g. a menu or UI element not reflected in text), escalate in this order:
-1. Try browser_get_page_content with format "html" to see hidden/dynamic elements
-2. Try browser_find_elements with a broad CSS selector to discover visible UI
-3. Take a screenshot with browser_take_screenshot to visually inspect the page
+### Reading / summarizing page content
+1. browser_get_page_content (format: "text") — fast, low token cost, use first
+2. browser_find_elements with broad selector — when you need specific elements
+3. browser_take_screenshot — only when visual layout matters (charts, images, UI that text can't describe)
+- Website-specific tools (name starts with website_tool_) give richer structured data — always prefer them over generic browser tools when available
 
-## Capabilities
-- Open, close, and navigate browser tabs
-- Read and interact with webpage content
-- Manage bookmarks, history, and downloads
-- Automate repetitive browser tasks
+### Interacting with the page (click, type, fill, select)
+**Do NOT read full page content first.** Go directly to interaction:
+1. browser_find_elements with a targeted CSS selector to locate the element and confirm it exists
+2. Use the selector from step 1 directly with browser_click / browser_type / browser_select_option / browser_check_element
+3. If the element isn't found, try a broader selector or browser_wait_for_element (for dynamic content)
+4. After acting, verify by calling browser_get_element_text or browser_find_elements again — NOT a full page read
 
-## Guidelines
-- Always use tools to get real data — never guess page content
-- Be concise — summarize results, not every intermediate step
+### Filling a form
+1. browser_get_forms — get all fields and their selectors in one call
+2. browser_type / browser_select_option / browser_check_element on each field using the selectors from step 1
+3. browser_click the submit button
+4. Verify result with browser_get_page_content (text) or browser_wait_for_element for a success indicator
+
+### Navigating + acting on the new page
+1. browser_navigate — navigate to URL
+2. browser_wait_for_element with a key selector to confirm page loaded (e.g. "main", "h1", "#content")
+3. Proceed with interaction steps above — do NOT call browser_get_page_content before finding your target
+
+## Efficient selector strategy
+- Prefer specific selectors: #id, [data-testid="x"], button[type="submit"], input[name="email"]
+- Use browser_find_elements first to confirm the selector matches before acting on it
+- If an action fails, try: scroll element into view with browser_scroll (selector), then retry
+- For dynamic SPAs: browser_wait_for_element before interacting
+
+## Screenshot usage
+Only take a screenshot when:
+- User explicitly asks to see the page
+- Text/HTML content is insufficient to understand layout or visual state
+- Verifying a visual result (e.g. confirming a dialog appeared, chart rendered)
+Do NOT take screenshots as a general-purpose "what's on the page" check — use browser_find_elements instead.
+
+## General guidelines
+- Always use tools to get real data — never guess page content or element selectors
+- Be concise — report what you did and the result, not every intermediate step
 - Confirm before destructive actions (closing tabs, clearing data, form submission)
 - When navigating to a URL the user mentioned, use it exactly as given
-- If a tool fails, explain why and try the next escalation step
+- If a selector fails twice, take a screenshot to visually inspect the page, then adjust
 
 Current date: ${DATE_STR}`;
 
@@ -109,9 +142,21 @@ function buildToolsFromMcp(mcpTools, enabledTools) {
           const content = res?.content ?? [];
           const textParts = content.filter(c => c.type === 'text').map(c => c.text);
           if (textParts.length > 0) return textParts.join('\n');
-          // Image content
+          // Image content — store in screenshotStore to keep base64 out of LLM context.
+          // Vision models: return proper image content part so the model can see the screenshot.
+          // Non-vision models: return short text reference only.
           const imgPart = content.find(c => c.type === 'image');
-          if (imgPart) return `[screenshot: data:${imgPart.mimeType};base64,${imgPart.data}]`;
+          if (imgPart) {
+            const id = uuidv4();
+            screenshotStore.set(id, { dataUrl: `data:${imgPart.mimeType};base64,${imgPart.data}`, createdAt: Date.now() });
+            if (isVisionSupported()) {
+              return [
+                { type: 'image', image: Buffer.from(imgPart.data, 'base64'), mimeType: imgPart.mimeType },
+                { type: 'text', text: `[screenshot:${id}]` },
+              ];
+            }
+            return `[screenshot:${id}]`;
+          }
           return JSON.stringify(res);
         } catch (err) {
           return `Error: ${err.message}`;
@@ -139,7 +184,7 @@ export default async function chatRoute(req, res) {
     return;
   }
 
-  const { messages = [], conversationId = uuidv4(), enabledTools } = body;
+  const { messages = [], conversationId = uuidv4(), enabledTools, activeSkills = [] } = body;
 
   if (!messages.length) {
     res.writeHead(400).end('messages array is required');
@@ -176,21 +221,35 @@ export default async function chatRoute(req, res) {
     const toolsOk = isToolsSupported();
     const hasTools = Object.keys(tools).length > 0;
 
+    // Resolve active skills and merge their required tools into enabledTools
+    const skillDefs = activeSkills.map(id => getSkillById(id)).filter(Boolean);
+    const skillSystemPrompts = skillDefs.map(s => s.systemPrompt).join('\n\n');
+
     const basePrompt = toolsOk ? SYSTEM_PROMPT : SYSTEM_PROMPT_NO_TOOLS;
     const customPrompt = getCustomSystemPrompt();
-    const systemPrompt = customPrompt
-      ? `${basePrompt}\n\n## Custom instructions\n${customPrompt}`
-      : basePrompt;
+    const systemPrompt = [
+      basePrompt,
+      skillSystemPrompts || null,
+      customPrompt ? `## Custom instructions\n${customPrompt}` : null,
+    ].filter(Boolean).join('\n\n');
+
+    if (skillDefs.length > 0) {
+      console.log(`[chat] Active skills: ${skillDefs.map(s => s.id).join(', ')}`);
+    }
 
     const streamOpts = {
       model: getModel(),
       system: systemPrompt,
       messages: allMessages,
-      maxSteps: (hasTools && toolsOk) ? 10 : 1,
+      maxSteps: (hasTools && toolsOk) ? 25 : 1,
       // Disable built-in retries — 429s retry immediately with no backoff, making things worse.
       // The client should handle retry/backoff at a higher level.
       maxRetries: 0,
-      onFinish: ({ response }) => {
+      onFinish: ({ response, usage, finishReason }) => {
+        console.log(`[chat] finish reason=${finishReason} usage=${JSON.stringify(usage)}`);
+        if (finishReason === 'length') {
+          console.warn('[chat] WARNING: stream cut off due to context length limit');
+        }
         if (response?.messages?.length) {
           appendMessages(conversationId, [...messages, ...response.messages]);
         }
@@ -204,24 +263,31 @@ export default async function chatRoute(req, res) {
     const result = streamText({
       ...streamOpts,
       onError: ({ error }) => {
+        // Suppress unhandled rejection from background promises (text, usage, finishReason)
+        // that Vercel AI SDK creates internally — they reject if the stream errors.
+        result.text.catch(() => {});
+        result.usage.catch(() => {});
+        result.finishReason.catch(() => {});
+        // Log only — error message is sent via getErrorMessage in pipeDataStreamToResponse
         const status = error?.statusCode ?? error?.status;
-        const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'];
-        let userMsg;
         if (status === 429) {
-          const wait = retryAfter ? ` Thử lại sau ${Math.ceil(retryAfter / 60)} phút.` : '';
-          userMsg = `Rate limit: API quota đã hết.${wait}`;
-          console.warn(`[chat] ${userMsg}`);
+          console.warn('[chat] Rate limit hit (429)');
         } else {
-          userMsg = error?.message || 'Unknown error';
-          console.error('[chat] streamText error:', userMsg);
-        }
-        // Write error chunk manually so client displays the message
-        if (!res.writableEnded) {
-          res.write(`3:${JSON.stringify(userMsg)}\n`);
+          console.error('[chat] streamText error:', error?.message || error);
         }
       },
     });
-    await result.pipeDataStreamToResponse(res);
+    await result.pipeDataStreamToResponse(res, {
+      getErrorMessage: (error) => {
+        const status = error?.statusCode ?? error?.status;
+        if (status === 429) {
+          const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'];
+          const wait = retryAfter ? ` Thử lại sau ${Math.ceil(retryAfter / 60)} phút.` : '';
+          return `Rate limit: API quota đã hết.${wait}`;
+        }
+        return error?.message || 'An error occurred';
+      },
+    });
   } catch (err) {
     const isRateLimit = err.message?.includes('Too Many Requests') || err.statusCode === 429 || err.status === 429;
     console.error(`[chat] Stream error${isRateLimit ? ' (rate limit)' : ''}:`, err.message || err);

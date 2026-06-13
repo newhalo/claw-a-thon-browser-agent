@@ -47,6 +47,45 @@ export async function checkAgentServiceHealthFull(url: string): Promise<HealthSt
   }
 }
 
+export interface PredefinedModel {
+  id: string;
+  name: string;
+  category: string;
+  provider: string;
+  baseUrl?: string;
+  toolsSupported: boolean;
+  visionSupported: boolean;
+  default?: boolean;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+}
+
+export async function fetchSkills(agentServiceUrl: string): Promise<Skill[]> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/skills`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchModels(agentServiceUrl: string): Promise<PredefinedModel[]> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/models`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
+}
+
 export async function pushProviderConfig(
   agentServiceUrl: string,
   provider: string,
@@ -54,12 +93,13 @@ export async function pushProviderConfig(
   model?: string,
   baseUrl?: string,
   toolsSupported?: boolean,
+  visionSupported?: boolean,
 ): Promise<boolean> {
   try {
     const res = await fetch(`${agentServiceUrl}/provider-config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, apiKey, model, baseUrl, toolsSupported }),
+      body: JSON.stringify({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported }),
       signal: AbortSignal.timeout(5000),
     });
     return res.ok;
