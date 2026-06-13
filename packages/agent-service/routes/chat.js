@@ -18,6 +18,9 @@ import { getModel, getProviderStatus } from '../providers/index.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
 
+const DATE_STR = new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+// Full system prompt used when the provider supports function/tool calling
 const SYSTEM_PROMPT = `You are a browser automation agent with access to browser tools via MCP (Model Context Protocol).
 
 You can help the user:
@@ -35,7 +38,13 @@ Guidelines:
 - Always confirm before destructive actions (closing tabs, clearing data, form submission)
 - When navigating to a URL the user mentioned, use it exactly as given
 
-Current date: ${new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`;
+Current date: ${DATE_STR}`;
+
+// Stripped system prompt for openai-compat models that don't reliably support function calling.
+// Avoids mentioning tools so the model doesn't spontaneously generate tool-call tokens.
+const SYSTEM_PROMPT_NO_TOOLS = `You are a helpful browser assistant. Answer the user's questions and help with browser-related tasks by providing clear instructions and information. Respond entirely in plain text — do not call any functions or tools.
+
+Current date: ${DATE_STR}`;
 
 function buildToolsFromMcp(mcpTools, enabledTools) {
   const allowed = enabledTools && enabledTools.length > 0
@@ -152,19 +161,20 @@ export default async function chatRoute(req, res) {
     }
 
     const hasTools = Object.keys(tools).length > 0;
+    const isCompatProvider = providerName === 'openai-compat';
+
     const streamOpts = {
       model: getModel(),
-      system: SYSTEM_PROMPT,
+      system: isCompatProvider ? SYSTEM_PROMPT_NO_TOOLS : SYSTEM_PROMPT,
       messages: allMessages,
-      maxSteps: hasTools ? 10 : 1,
+      maxSteps: (hasTools && !isCompatProvider) ? 10 : 1,
       onFinish: ({ response }) => {
         appendMessages(conversationId, [...messages, ...response.messages]);
       },
     };
 
-    // openai-compat providers (e.g. VNGCloud gemma) may not support function calling —
-    // omit tools to avoid InvalidResponseDataError on malformed tool_call chunks.
-    if (hasTools && providerName !== 'openai-compat') {
+    // Pass tools only when provider reliably supports function calling
+    if (hasTools && !isCompatProvider) {
       streamOpts.tools = tools;
     }
 
