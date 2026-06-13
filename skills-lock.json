@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "agentbase": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase/SKILL.md",
+      "computedHash": "6c7bdd8c9237ac6ca83c568c15f7e7c847cfa95f1f0d8844afe5a6dcddce30a6"
+    },
+    "agentbase-deploy": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-deploy/SKILL.md",
+      "computedHash": "411f24001093bbfbebee7556ddc704ea33273c2df6c9935fce786bf115a3db60"
+    },
+    "agentbase-gateway": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-gateway/SKILL.md",
+      "computedHash": "cbc2ed631296a986b947776e481af45b4a99400c7c47c41f81d3e70c218f11c6"
+    },
+    "agentbase-identity": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-identity/SKILL.md",
+      "computedHash": "1d17a3ea4b83c9e2778001a0fc6e582b37fa2ce62a44fc28c4e169ee002e1202"
+    },
+    "agentbase-llm": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-llm/SKILL.md",
+      "computedHash": "8d2f710179c741b95c83c2b44bf43afea866e5dfdbb256fe565c552ba78d42fa"
+    },
+    "agentbase-memory": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-memory/SKILL.md",
+      "computedHash": "978ab2df945623a0553ee65fb3c820157e66340a8e215805a8f1e0eb157581c5"
+    },
+    "agentbase-monitor": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-monitor/SKILL.md",
+      "computedHash": "278f285ba08fb8dfb4584d6dd5c8c9799de850246dc006cd16da301183146499"
+    },
+    "agentbase-policy": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-policy/SKILL.md",
+      "computedHash": "0c939002ce18fc3d3d2802f085c336635d6c5bb1ab365b3114c3d9a982b0fdfe"
+    },
+    "agentbase-teardown": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-teardown/SKILL.md",
+      "computedHash": "32d3c539a255bbe1b39c5e1ff1c15c2d930a48f359319508899d3f8b9356c2c6"
+    },
+    "agentbase-wizard": {
+      "source": "vngcloud/greennode-agentbase-skills",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/agentbase-wizard/SKILL.md",
+      "computedHash": "23787f4926751f392d00f4c87a1303be00059e84f43f1b9dfd8ab3819d8ee5b9"
+    }
+  }
+}

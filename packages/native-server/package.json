@@ -1,0 +1,18 @@
+{
+  "name": "mcpb-native-server-gateway",
+  "version": "1.0.0",
+  "description": "Authenticated public gateway for MCP-B native server",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.8.1",
+  "dependencies": {
+    "@mcp-b/native-server": "^1.0.47"
+  },
+  "license": "MIT"
+}

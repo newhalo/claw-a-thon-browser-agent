@@ -1,0 +1,7 @@
+.greennode.json
+.agentbase/
+packages/native-server/tokens.json
+packages/test-agent
+packages/WebMCP
+.history
+.env
