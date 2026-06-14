@@ -458,6 +458,14 @@ Settings → group "Agent Skills":
 - [x] **Storage sync real-time**: `chrome.storage.sync.onChanged` — side panel tự update khi options page thay đổi skill settings
 - [x] **Options page full-screen**: `chrome.tabs.create` thay `openOptionsPage`, `open_in_tab: true` trong manifest, `width: 100%` layout
 
+### 2026-06-14 — #12 Long-term memory
+
+- [x] **`memory/long-term.js`**: SQLite (`better-sqlite3`) + FTS5 virtual table cho keyword search + cosine similarity trong JS cho vector search; `saveMemory`, `searchMemories`, `getRecentMemories`, `deleteMemory`, `clearAllMemories`, `getMemoryStats`; `consolidateConversation` — summarize với LLM + embed + save, debounce 5 phút per conversation
+- [x] **`providers/index.js`**: thêm `getEmbeddingModel()` — trả về `text-embedding-3-small` cho openai/openai-compat, null cho anthropic (fallback về FTS5)
+- [x] **`routes/chat.js`**: inject relevant memories vào system prompt (`## Relevant context from past conversations`) trước mỗi request; trigger `consolidateConversation` async sau `onFinish`
+- [x] **`server.js`**: `GET /memories`, `POST /memories/clear`, `DELETE /memories/:id`
+- [x] **Options page**: tab 🧠 Memory — xem danh sách memories (content, timestamp, conv ID), stats (total / with embeddings), xóa từng entry hoặc clear all
+
 ### 2026-06-14 — Provider UX + auto-detect
 
 - [x] **Custom LLM Provider form**: Options page Provider tab thêm "Custom (OpenAI-compatible)" option, provider type selector (openai-compat / anthropic / openai), Base URL, Model ID, Tools/Vision checkboxes; restore đúng type từ storage
@@ -700,7 +708,7 @@ Thứ tự ưu tiên dựa trên **impact × effort**: fix blockers trước, qu
 | 9 | **Custom MCP Servers UI** | 4 | 🟡 Trung | M | ✅ Done (Options page MCP tab, paste JSON import, test proxy, multi-server backend) |
 | 10 | **Skill auto-suggest theo URL** | 5 | 🟡 Trung | S | 🔲 Chưa làm |
 | 11 | **Skill management trong Settings** | 5 | 🟢 Thấp | S | ✅ Done (Options page full-screen + custom skills từ URL/manual + storage sync) |
-| 12 | **Phase 3 — Long-term memory** | 3 | 🟡 Trung | L | 🔲 Chưa làm |
+| 12 | **Phase 3 — Long-term memory** | 3 | 🟡 Trung | L | ✅ Done (SQLite+FTS5+cosine sim, consolidation, memory injection, Options UI) |
 | 13 | **toolsSupported auto-detect** | 2 | 🟢 Thấp | S | ✅ Done (POST /detect-capabilities backend, Auto-detect button in ProviderTab, custom provider form với anthropic/openai/openai-compat type selector) |
 | 14 | **Content script auto-reconnect** | — | 🟢 Thấp | S | 🔲 Chưa làm (known Chrome MV3 limitation, workaround: refresh page) |
 | 15 | **User login khi startup extension** | 8 | 🔴 Cao | M | 🔲 Chưa làm |

@@ -8,13 +8,14 @@ import {
   type PredefinedModel, type Skill, type CustomSkill, type CustomMcpServer,
 } from '../sidepanel/lib/agentServiceClient';
 
-type Tab = 'general' | 'provider' | 'skills' | 'mcp' | 'security';
+type Tab = 'general' | 'provider' | 'skills' | 'mcp' | 'memory' | 'security';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'general',  label: 'General',  icon: '⚙️' },
   { id: 'provider', label: 'Provider', icon: '🤖' },
   { id: 'skills',   label: 'Skills',   icon: '🎯' },
   { id: 'mcp',      label: 'MCP',      icon: '🔌' },
+  { id: 'memory',   label: 'Memory',   icon: '🧠' },
   { id: 'security', label: 'Security', icon: '🔑' },
 ];
 
@@ -1021,6 +1022,101 @@ function McpTab() {
   );
 }
 
+// ── Memory tab ────────────────────────────────────────────────────────────────
+
+interface MemoryEntry { id: number; conversation_id: string; content: string; importance: number; created_at: number; }
+
+function MemoryTab() {
+  const [memories, setMemories] = useState<MemoryEntry[]>([]);
+  const [stats, setStats] = useState<{ total: number; withEmbeddings: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { url } = await getAgentServiceConfig();
+      const res = await fetch(`${url}/memories?limit=50`);
+      if (res.ok) { const data = await res.json(); setMemories(data.memories ?? []); setStats(data.stats ?? null); }
+    } catch { /* service down */ } finally { setLoading(false); }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const deleteOne = async (id: number) => {
+    const { url } = await getAgentServiceConfig();
+    await fetch(`${url}/memories/${id}`, { method: 'DELETE' });
+    setMemories(p => p.filter(m => m.id !== id));
+    if (stats) setStats(s => s ? { ...s, total: s.total - 1 } : s);
+  };
+
+  const clearAll = async () => {
+    if (!confirm('Xóa toàn bộ long-term memory?')) return;
+    const { url } = await getAgentServiceConfig();
+    const res = await fetch(`${url}/memories/clear`, { method: 'POST' });
+    if (res.ok) { setMemories([]); setStats({ total: 0, withEmbeddings: 0 }); setMsg({ type: 'success', text: '✅ Đã xóa toàn bộ memory' }); }
+    else setMsg({ type: 'error', text: '❌ Xóa thất bại' });
+  };
+
+  const fmt = (ts: number) => new Date(ts).toLocaleString('vi-VN');
+
+  return (
+    <div style={{ maxWidth: 700 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <SectionTitle>Long-term Memory</SectionTitle>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={load} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }}>↻ Refresh</button>
+          <button onClick={clearAll} disabled={memories.length === 0} style={{ ...btnStyle, fontSize: 12, padding: '6px 12px', background: '#ef4444', borderColor: '#ef4444' }}>🗑 Clear all</button>
+        </div>
+      </div>
+      <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 16, lineHeight: 1.6 }}>
+        Agent tự động tóm tắt các cuộc hội thoại và lưu vào đây. Khi bắt đầu chat mới, nội dung liên quan sẽ được inject vào context.
+      </p>
+
+      {stats && (
+        <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+          {[
+            { label: 'Total memories', value: stats.total },
+            { label: 'With embeddings', value: stats.withEmbeddings },
+            { label: 'Keyword-only', value: stats.total - stats.withEmbeddings },
+          ].map(s => (
+            <div key={s.label} style={{ padding: '10px 16px', borderRadius: 10, background: '#fff', border: '1px solid #e5e7eb', textAlign: 'center', minWidth: 100 }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: '#4f46e5' }}>{s.value}</div>
+              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{s.label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Msg msg={msg} />
+
+      {loading ? (
+        <div style={{ color: '#9ca3af', fontSize: 13, padding: '20px 0' }}>Đang tải…</div>
+      ) : memories.length === 0 ? (
+        <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 13, padding: '40px 0' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🧠</div>
+          Chưa có memory nào. Agent sẽ tự động tạo sau khi hoàn thành hội thoại.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {memories.map(m => (
+            <div key={m.id} style={{ padding: '12px 16px', borderRadius: 10, background: '#fff', border: '1px solid #e5e7eb' }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <div style={{ flex: 1, fontSize: 13, color: '#1a1a2e', lineHeight: 1.6 }}>{m.content}</div>
+                <button onClick={() => deleteOne(m.id)} title="Xóa" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 6, border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#9ca3af', fontSize: 12 }}>✕</button>
+              </div>
+              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 12 }}>
+                <span>🕐 {fmt(m.created_at)}</span>
+                <span style={{ fontFamily: 'monospace' }}>conv: {m.conversation_id.slice(0, 8)}…</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Security tab ──────────────────────────────────────────────────────────────
 
 interface TokenEntry { id: string; name: string; clientId: string; createdAt: string; lastUsedAt: string | null; tokenPrefix: string; }
@@ -1208,6 +1304,7 @@ export default function App() {
         {tab === 'provider' && <ProviderTab />}
         {tab === 'skills'   && <SkillsTab />}
         {tab === 'mcp'      && <McpTab />}
+        {tab === 'memory'   && <MemoryTab />}
         {tab === 'security' && <SecurityTab />}
       </main>
     </div>

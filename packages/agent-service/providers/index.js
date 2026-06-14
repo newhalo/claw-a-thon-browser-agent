@@ -142,3 +142,26 @@ export function getModel() {
   const { provider, modelId } = getProvider();
   return provider(modelId);
 }
+
+/**
+ * Returns an embedding model for the current provider config, or null if unavailable.
+ * OpenAI / openai-compat → text-embedding-3-small at the configured base URL.
+ * Anthropic → null (no native embedding API).
+ */
+export function getEmbeddingModel() {
+  const cfg = runtimeConfig || envConfig;
+  if (!cfg.apiKey) return null;
+  try {
+    switch (cfg.provider) {
+      case 'openai':
+        return createOpenAI({ apiKey: cfg.apiKey }).embedding('text-embedding-3-small');
+      case 'openai-compat':
+        if (!cfg.baseUrl) return null;
+        return createOpenAI({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey }).embedding('text-embedding-3-small');
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}

@@ -3,6 +3,7 @@ import { listTools, resetSession, setMcpConfig, getMcpConfig, setExternalMcpServ
 import { setProviderConfig, getProviderStatus } from './providers/index.js';
 import { setCustomSystemPrompt, getCustomSystemPrompt } from './config.js';
 import chatRoute, { screenshotStore } from './routes/chat.js';
+import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats } from './memory/long-term.js';
 import { PREDEFINED_MODELS } from './models.js';
 import { getSkillsPublic } from './skills/registry.js';
 
@@ -261,6 +262,46 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/system-prompt' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ systemPrompt: getCustomSystemPrompt() }));
+    return;
+  }
+
+  // ── Long-term memory ─────────────────────────────────────────────────────
+  if (url.pathname === '/memories' && req.method === 'GET') {
+    try {
+      const limit = parseInt(url.searchParams.get('limit') || '20', 10);
+      const memories = getRecentMemories(limit);
+      const stats = getMemoryStats();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ memories, stats }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (url.pathname === '/memories/clear' && req.method === 'POST') {
+    try {
+      clearAllMemories();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  const memoryDeleteMatch = url.pathname.match(/^\/memories\/(\d+)$/);
+  if (memoryDeleteMatch && req.method === 'DELETE') {
+    try {
+      deleteMemory(parseInt(memoryDeleteMatch[1], 10));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 

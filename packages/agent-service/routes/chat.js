@@ -11,13 +11,14 @@
  * Response: text/event-stream (Vercel AI SDK data stream protocol)
  */
 
-import { streamText, generateText, tool } from 'ai';
+import { streamText, generateText, embed, tool } from 'ai';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
-import { getModel, getProviderStatus, isToolsSupported, isVisionSupported } from '../providers/index.js';
+import { getModel, getEmbeddingModel, getProviderStatus, isToolsSupported, isVisionSupported } from '../providers/index.js';
 import { getCustomSystemPrompt } from '../config.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
+import { searchMemories, consolidateConversation } from '../memory/long-term.js';
 import { getSkillById } from '../skills/registry.js';
 
 // Screenshot store — keeps base64 images out of LLM context.
@@ -283,11 +284,41 @@ export default async function chatRoute(req, res) {
     ];
     const skillSystemPrompts = allSkillPrompts.join('\n\n');
 
+    // Retrieve relevant long-term memories for this query
+    const firstUserMsg = messages.findLast(m => m.role === 'user');
+    let memoryContext = '';
+    if (firstUserMsg) {
+      try {
+        const queryText = typeof firstUserMsg.content === 'string'
+          ? firstUserMsg.content
+          : (Array.isArray(firstUserMsg.content)
+              ? firstUserMsg.content.filter(p => p.type === 'text').map(p => p.text).join(' ')
+              : '');
+
+        let queryEmbedding = null;
+        try {
+          const embModel = getEmbeddingModel();
+          if (embModel) {
+            const { embedding } = await embed({ model: embModel, value: queryText });
+            queryEmbedding = embedding;
+          }
+        } catch { /* embedding unavailable — fall through to FTS */ }
+
+        const memories = searchMemories(queryText, queryEmbedding, 4);
+        if (memories.length > 0) {
+          memoryContext = memories.map(m => `- ${m.content}`).join('\n');
+        }
+      } catch (err) {
+        console.warn('[memory] Search failed:', err.message);
+      }
+    }
+
     const basePrompt = toolsOk ? SYSTEM_PROMPT : SYSTEM_PROMPT_NO_TOOLS;
     const customPrompt = getCustomSystemPrompt();
     const systemPrompt = [
       basePrompt,
       skillSystemPrompts || null,
+      memoryContext ? `## Relevant context from past conversations\n${memoryContext}` : null,
       customPrompt ? `## Custom instructions\n${customPrompt}` : null,
     ].filter(Boolean).join('\n\n');
 
@@ -326,9 +357,14 @@ export default async function chatRoute(req, res) {
         if (finishReason === 'length') {
           console.warn('[chat] WARNING: stream cut off due to context length limit');
         }
+        const fullHistory = response?.messages?.length
+          ? [...messages, ...response.messages]
+          : messages;
         if (response?.messages?.length) {
-          appendMessages(conversationId, [...messages, ...response.messages]);
+          appendMessages(conversationId, fullHistory);
         }
+        // Async long-term memory consolidation — fire and forget, never blocks stream
+        consolidateConversation(conversationId, fullHistory, getModel, getEmbeddingModel).catch(() => {});
       },
     };
 
