@@ -11,10 +11,10 @@
  * Response: text/event-stream (Vercel AI SDK data stream protocol)
  */
 
-import { streamText, generateText, embed, tool } from 'ai';
+import { streamText, embed, tool } from 'ai';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
-import { getModel, getEmbeddingModel, getProviderStatus, isToolsSupported, isVisionSupported } from '../providers/index.js';
+import { getModel, getEmbeddingModel, getProviderStatus, isToolsSupported, isVisionSupported, getProviderCfg } from '../providers/index.js';
 import { getCustomSystemPrompt } from '../config.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
@@ -118,19 +118,34 @@ async function compressHistory(messages) {
     return `${m.role.toUpperCase()}: ${content}`;
   }).join('\n\n');
 
+  // Use direct fetch to avoid hanging with patchToolCallIndexFetch providers
   try {
-    const { text } = await generateText({
-      model: getModel(),
-      maxRetries: 0,
-      messages: [
-        {
-          role: 'user',
-          content: `Summarize the following conversation history concisely, preserving all key facts, decisions, goals, and context needed to continue the task. Output a single paragraph starting with "Previous conversation summary:"\n\n${historyText}`,
-        },
-      ],
-    });
+    const cfg = getProviderCfg();
+    let text;
+    if (cfg && cfg.apiKey && (cfg.provider === 'openai' || cfg.provider === 'openai-compat')) {
+      const baseUrl = cfg.provider === 'openai' ? 'https://api.openai.com/v1' : cfg.baseUrl;
+      const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+        body: JSON.stringify({
+          model: cfg.model || 'gpt-4o-mini',
+          messages: [{ role: 'user', content: `Summarize the following conversation history concisely, preserving all key facts, decisions, goals, and context needed to continue the task. Output a single paragraph starting with "Previous conversation summary:"\n\n${historyText}` }],
+          max_tokens: 500,
+          stream: false,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const data = await res.json();
+      text = data.choices?.[0]?.message?.content?.trim();
+    } else if (cfg && cfg.provider === 'anthropic') {
+      // Anthropic doesn't hang — safe to use AI SDK
+      const { generateText } = await import('ai');
+      const result = await generateText({ model: getModel(), maxRetries: 0, messages: [{ role: 'user', content: `Summarize the following conversation history concisely, preserving all key facts, decisions, goals, and context needed to continue the task. Output a single paragraph starting with "Previous conversation summary:"\n\n${historyText}` }] });
+      text = result.text?.trim();
+    }
 
-    const summaryMsg = { role: 'user', content: text.trim() };
+    if (!text) throw new Error('Empty summary response');
+    const summaryMsg = { role: 'user', content: text };
     return { messages: [summaryMsg, ...recent], compressed: true };
   } catch (err) {
     console.warn('[chat] Context compression failed, using original messages:', err.message);
