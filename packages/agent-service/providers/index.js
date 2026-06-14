@@ -58,6 +58,10 @@ const envConfig = {
   visionSupported: process.env.CUSTOM_VISION_SUPPORTED === 'true' ? true : null,
 };
 
+export function getProviderCfg() {
+  return runtimeConfig || envConfig;
+}
+
 export function setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported, embeddingModel }) {
   runtimeConfig = {
     provider,

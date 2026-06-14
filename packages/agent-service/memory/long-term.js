@@ -8,7 +8,8 @@
  */
 
 import Database from 'better-sqlite3';
-import { embed, generateText } from 'ai';
+import { embed } from 'ai';
+import { getProviderCfg } from '../providers/index.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -179,38 +180,56 @@ const recentlyConsolidated = new Map(); // conversationId → timestamp
 export async function consolidateConversation(conversationId, messages, getModelFn, getEmbeddingFn) {
   // Skip if too few messages (< 4 = 2 exchanges)
   const userMsgs = messages.filter(m => m.role === 'user');
-  if (userMsgs.length < 2) return;
+  console.log(`[memory] consolidate start conv=${conversationId} userMsgs=${userMsgs.length} totalMsgs=${messages.length}`);
+  if (userMsgs.length < 2) { console.log('[memory] skip: < 2 user messages'); return; }
 
   // Debounce — don't consolidate the same conversation within 5 minutes
   const last = recentlyConsolidated.get(conversationId);
-  if (last && Date.now() - last < 5 * 60 * 1000) return;
+  if (last && Date.now() - last < 5 * 60 * 1000) { console.log('[memory] skip: debounce'); return; }
   recentlyConsolidated.set(conversationId, Date.now());
 
   try {
-    // Build a text digest of the conversation (trim large tool results)
+    const extractText = (m) => typeof m.content === 'string'
+      ? m.content
+      : (Array.isArray(m.content)
+          ? m.content.filter(p => p.type === 'text').map(p => p.text).join(' ')
+          : '');
+
     const digest = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => {
-        const text = typeof m.content === 'string'
-          ? m.content
-          : (Array.isArray(m.content)
-              ? m.content.filter(p => p.type === 'text').map(p => p.text).join(' ')
-              : JSON.stringify(m.content));
-        return `${m.role === 'user' ? 'User' : 'Assistant'}: ${text.slice(0, 400)}`;
-      })
+      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${extractText(m).slice(0, 400)}`)
       .join('\n')
       .slice(0, 6000);
 
-    // Summarize
-    const { text: summary } = await generateText({
-      model: getModelFn(),
-      messages: [{
-        role: 'user',
-        content: `Summarize this conversation in 2–3 sentences, capturing key facts, decisions, and outcomes that would be useful context in future conversations. Be concise and specific.\n\n${digest}`,
-      }],
-      maxTokens: 200,
-      maxRetries: 0,
-    });
+    // Summarize via direct fetch (bypasses AI SDK to avoid hanging on some providers)
+    const cfg = getProviderCfg();
+    let summary;
+    if (cfg && cfg.apiKey && (cfg.provider === 'openai' || cfg.provider === 'openai-compat')) {
+      const baseUrl = cfg.provider === 'openai' ? 'https://api.openai.com/v1' : cfg.baseUrl;
+      try {
+        const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+          body: JSON.stringify({
+            model: cfg.model || 'gpt-4o-mini',
+            messages: [{ role: 'user', content: `Summarize this conversation in 2–3 sentences, capturing key facts, decisions, and outcomes useful for future context. Be concise.\n\n${digest}` }],
+            max_tokens: 200,
+            stream: false,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        const data = await res.json();
+        summary = data.choices?.[0]?.message?.content?.trim();
+        console.log('[memory] Summarized:', summary?.slice(0, 80));
+      } catch (err) {
+        console.warn('[memory] Summarization failed, using fallback:', err.message);
+        summary = null;
+      }
+    }
+    // Fallback: concatenate user messages if summarization unavailable/failed
+    if (!summary) {
+      summary = userMsgs.map(m => extractText(m).trim()).filter(Boolean).map(t => t.slice(0, 200)).join(' | ').slice(0, 600);
+    }
 
     if (!summary?.trim()) return;
 
@@ -219,7 +238,11 @@ export async function consolidateConversation(conversationId, messages, getModel
     try {
       const embModel = getEmbeddingFn();
       if (embModel) {
-        const { embedding: emb } = await embed({ model: embModel, value: summary });
+        const embedPromise = embed({ model: embModel, value: summary });
+        const embedTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Embedding timed out after 15s')), 15_000)
+        );
+        const { embedding: emb } = await Promise.race([embedPromise, embedTimeout]);
         embedding = emb;
       }
     } catch (err) {

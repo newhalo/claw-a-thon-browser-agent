@@ -472,6 +472,22 @@ Settings → group "Agent Skills":
 - [x] **#13 toolsSupported auto-detect**: `POST /detect-capabilities` backend proxy — test tool call thật + vision test (1×1 PNG); `detectProviderCapabilities()` client helper; nút "🔍 Auto-detect capabilities" trong ProviderTab; anthropic/openai trả về known-good ngay
 - [x] **ExternalMcpGroupCard UX**: collapse/expand + per-tool toggle + bulk toggle + persist `disabledExternalMcpTools` storage; `disabledTools` denylist trong chat request
 
+### 2026-06-15 — #12 Long-term memory bugfixes
+
+- [x] **Root cause 1 — consolidation silent fail**: `.catch(() => {})` swallow lỗi → đổi thành `.catch(err => console.warn(...))`
+- [x] **Root cause 2 — embedding model hardcoded**: `getEmbeddingModel()` hardcode `text-embedding-3-small` không tồn tại trên VNGCloud → thêm `embeddingModel` field toàn bộ stack (provider config, storage, UI)
+- [x] **Root cause 3 — generateText hang vô thời hạn**: Vercel AI SDK `generateText` + `patchToolCallIndexFetch` (streaming wrap) khiến request không bao giờ resolve. `Promise.race` + `AbortSignal` không giải quyết được vì AI SDK không propagate signal đúng cách. Fix: bypass AI SDK, dùng `fetch` trực tiếp với `AbortSignal.timeout(30_000)` cho summarization call.
+- [x] **Embedding model configurable**: Options page Provider tab thêm field "Embedding Model" (hint: `qwen/qwen3-embedding-8b` cho VNGCloud), store trong `agentProviderConfig`, push qua `pushProviderConfig` 8th param
+- [x] **`getProviderCfg()`**: export từ `providers/index.js` để `long-term.js` build plain fetch request mà không cần AI SDK
+
+### Potential improvements — Long-term memory
+- **LLM summarization quality**: Hiện dùng direct `fetch` gọi cùng model đang chat. Có thể dùng model nhỏ hơn (gpt-4o-mini, qwen3-1.7b) để giảm latency/cost cho summarization.
+- **Embedding search**: Hiện cosine similarity tính trong JS trên toàn bộ DB (max 500 rows). Khi DB lớn cần pagination hoặc approximate nearest neighbor (sqlite-vec khi stable, hoặc faiss).
+- **Consolidation trigger**: Hiện trigger sau mỗi turn thứ 2+, debounce 5 phút. Có thể improve: trigger khi conversation dài (>10 turns), hoặc khi user explicit "remember this".
+- **Memory relevance**: FTS5 fallback khi không có embedding. Có thể thêm recency scoring (memories gần đây được ưu tiên).
+- **Memory TTL**: Hiện không có expiry. Cần cleanup cron hoặc max-count policy để tránh DB phình ra.
+- **patchToolCallIndexFetch + generateText**: Bất kỳ call nào dùng `generateText` (không phải `streamText`) với provider có custom `fetch` wrapper đều có nguy cơ hang. Context compression (#5) cũng dùng `generateText` — cần kiểm tra lại.
+
 ### 2026-06-14 — Sprint 3 + 4 complete
 
 - [x] **#5 Auto context compression**: `estimateTokens()` + `compressHistory()` với `generateText`, trigger ở 60k tokens, giữ 8 messages gần nhất, `X-Context-Compressed` response header, UI indicator trong chat (`routes/chat.js`)
@@ -480,7 +496,7 @@ Settings → group "Agent Skills":
 - [x] **ToolsPanel external MCP UX**: group theo server, `ExternalMcpGroupCard` với collapse/expand + bulk toggle + per-tool toggle, disabled state persist `chrome.storage.sync` key `disabledExternalMcpTools`, `disabledTools` denylist trong chat request (`ToolsPanel.tsx`, `chat.js`, `ChatView.tsx`)
 
 ### Pending
-- [ ] Phase 3: Long-term memory (SQLite + sqlite-vec) — stub hiện tại
+- [x] Phase 3: Long-term memory ✅ (xem bugfixes 2026-06-15)
 - [x] Phase 4: Custom MCP servers ✅
 - [x] Phase 5 UX: #5 Auto context compression ✅
 - [x] Phase 5 UX: #6 Chat sessions + History ✅
@@ -501,7 +517,7 @@ Settings → group "Agent Skills":
 - In-memory `Map<conversationId, Message[]>` trong `memory/short-term.js`
 - Client (Zustand) gửi full history mỗi request; server chỉ dùng để append vào file
 
-### Long-term (chưa implement — `memory/long-term.js` là stub)
+### Long-term (✅ Implemented — `memory/long-term.js`)
 
 ```sql
 CREATE TABLE conversations (
