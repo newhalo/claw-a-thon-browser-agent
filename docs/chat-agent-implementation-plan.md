@@ -480,13 +480,17 @@ Settings → group "Agent Skills":
 - [x] **Embedding model configurable**: Options page Provider tab thêm field "Embedding Model" (hint: `qwen/qwen3-embedding-8b` cho VNGCloud), store trong `agentProviderConfig`, push qua `pushProviderConfig` 8th param
 - [x] **`getProviderCfg()`**: export từ `providers/index.js` để `long-term.js` build plain fetch request mà không cần AI SDK
 
+### 2026-06-15 — #5 Context compression bugfix
+
+- [x] **`compressHistory` hang fix**: Same root cause — `generateText` + `patchToolCallIndexFetch` block cả chat request khi context > 60k tokens. Fix: dùng `fetch` trực tiếp với `AbortSignal.timeout(30s)` cho openai/openai-compat, AI SDK chỉ dùng cho Anthropic.
+- [x] **Debug logs cleanup**: Gỡ verbose debug logs khỏi `consolidateConversation`.
+
 ### Potential improvements — Long-term memory
 - **LLM summarization quality**: Hiện dùng direct `fetch` gọi cùng model đang chat. Có thể dùng model nhỏ hơn (gpt-4o-mini, qwen3-1.7b) để giảm latency/cost cho summarization.
 - **Embedding search**: Hiện cosine similarity tính trong JS trên toàn bộ DB (max 500 rows). Khi DB lớn cần pagination hoặc approximate nearest neighbor (sqlite-vec khi stable, hoặc faiss).
 - **Consolidation trigger**: Hiện trigger sau mỗi turn thứ 2+, debounce 5 phút. Có thể improve: trigger khi conversation dài (>10 turns), hoặc khi user explicit "remember this".
 - **Memory relevance**: FTS5 fallback khi không có embedding. Có thể thêm recency scoring (memories gần đây được ưu tiên).
 - **Memory TTL**: Hiện không có expiry. Cần cleanup cron hoặc max-count policy để tránh DB phình ra.
-- **patchToolCallIndexFetch + generateText**: Bất kỳ call nào dùng `generateText` (không phải `streamText`) với provider có custom `fetch` wrapper đều có nguy cơ hang. Context compression (#5) cũng dùng `generateText` — cần kiểm tra lại.
 
 ### 2026-06-14 — Sprint 3 + 4 complete
 
