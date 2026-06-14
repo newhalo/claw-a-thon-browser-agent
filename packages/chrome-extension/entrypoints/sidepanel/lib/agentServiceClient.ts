@@ -365,6 +365,26 @@ export async function pushExternalMcpServers(agentServiceUrl: string, servers: C
   }
 }
 
+export async function detectProviderCapabilities(
+  agentServiceUrl: string,
+  provider: string,
+  apiKey: string,
+  modelId: string,
+  baseUrl?: string,
+): Promise<{ toolsSupported: boolean; visionSupported: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/detect-capabilities`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, apiKey, modelId, baseUrl }),
+      signal: AbortSignal.timeout(30000),
+    });
+    return await res.json();
+  } catch (err) {
+    return { toolsSupported: false, visionSupported: false, error: (err as Error).message };
+  }
+}
+
 export async function pushNativeConfigToAgentService(
   agentServiceUrl: string,
   nativeServerUrl: string,

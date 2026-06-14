@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   getAgentServiceConfig, checkAgentServiceHealthFull,
   pushProviderConfig, pushNativeConfigToAgentService, pushSystemPrompt,
-  fetchModels, fetchSkills, fetchSkillFromUrl,
+  fetchModels, fetchSkills, fetchSkillFromUrl, detectProviderCapabilities,
   loadCustomSkills, saveCustomSkills, loadDisabledSkills, saveDisabledSkills,
   loadCustomMcpServers, saveCustomMcpServers, pushExternalMcpServers, parseMcpConfigJson, testMcpServer,
   type PredefinedModel, type Skill, type CustomSkill, type CustomMcpServer,
@@ -183,10 +183,19 @@ function CapBadge({ label, active }: { label: string; active: boolean }) {
   );
 }
 
+const CUSTOM_ID = '__custom__';
+
 function ProviderTab() {
   const [models, setModels] = useState<PredefinedModel[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [customProviderType, setCustomProviderType] = useState<'openai-compat' | 'anthropic' | 'openai'>('openai-compat');
+  const [customBaseUrl, setCustomBaseUrl] = useState('');
+  const [customModelId, setCustomModelId] = useState('');
+  const [customTools, setCustomTools] = useState(true);
+  const [customVision, setCustomVision] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [detecting, setDetecting] = useState(false);
   const [status, setStatus] = useState<{ configured: boolean; provider?: string | null; model?: string | null } | null>(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -200,20 +209,87 @@ function ProviderTab() {
           const id = saved?.modelId || saved?.model;
           const match = list.find(m => m.id === id);
           const def = list.find(m => m.default) ?? list[0];
-          setSelectedId(match?.id ?? def?.id ?? '');
           if (saved?.apiKey) setApiKey(saved.apiKey);
+          if (match) {
+            setSelectedId(match.id);
+          } else if (id) {
+            // saved id not in catalog → restore as custom
+            setSelectedId(CUSTOM_ID);
+            setCustomModelId(id);
+            setCustomBaseUrl(saved?.baseUrl ?? '');
+            setCustomTools(saved?.toolsSupported ?? true);
+            setCustomVision(saved?.visionSupported ?? false);
+            const p = saved?.provider;
+            if (p === 'anthropic' || p === 'openai' || p === 'openai-compat') setCustomProviderType(p);
+          } else {
+            setSelectedId(def?.id ?? '');
+          }
         });
       });
       checkAgentServiceHealthFull(url).then(h => { if (h?.provider) setStatus(h.provider); });
     });
   }, []);
 
+  const isCustom = selectedId === CUSTOM_ID;
+
+  const autoDetect = async () => {
+    if (!apiKey.trim()) { setMsg({ type: 'error', text: 'Nhập API key trước khi auto-detect' }); return; }
+    setDetecting(true);
+    setMsg(null);
+    try {
+      const { url } = await getAgentServiceConfig();
+      let provider: string, modelId: string, baseUrl: string | undefined;
+      if (isCustom) {
+        if (!customModelId.trim()) { setMsg({ type: 'error', text: 'Nhập Model ID trước khi auto-detect' }); return; }
+        provider = customProviderType;
+        modelId = customModelId.trim();
+        baseUrl = customProviderType === 'openai-compat' ? (customBaseUrl.trim() || undefined) : undefined;
+      } else {
+        const m = models.find(x => x.id === selectedId);
+        if (!m) { setMsg({ type: 'error', text: 'Chọn model trước' }); return; }
+        provider = m.provider;
+        modelId = m.id;
+        baseUrl = m.baseUrl;
+      }
+      const result = await detectProviderCapabilities(url, provider, apiKey.trim(), modelId, baseUrl);
+      if (result.error && !isCustom) {
+        setMsg({ type: 'error', text: `❌ Detect lỗi: ${result.error}` });
+      } else {
+        if (isCustom) {
+          setCustomTools(result.toolsSupported);
+          setCustomVision(result.visionSupported);
+        }
+        setMsg({
+          type: 'success',
+          text: `✅ Tools: ${result.toolsSupported ? 'có' : 'không'} · Vision: ${result.visionSupported ? 'có' : 'không'}${result.error ? ` (${result.error})` : ''}`,
+        });
+      }
+    } finally { setDetecting(false); }
+  };
+
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
     if (!apiKey.trim()) { setMsg({ type: 'error', text: 'API key là bắt buộc' }); return; }
-    const m = models.find(x => x.id === selectedId);
-    if (!m) { setMsg({ type: 'error', text: 'Chọn model trước' }); return; }
+
+    let provider: string, modelId: string, baseUrl: string | undefined, tools: boolean, vision: boolean;
+    if (isCustom) {
+      if (!customModelId.trim()) { setMsg({ type: 'error', text: 'Model ID là bắt buộc với Custom' }); return; }
+      provider = customProviderType;
+      modelId = customModelId.trim();
+      baseUrl = customProviderType === 'openai-compat' ? (customBaseUrl.trim() || undefined) : undefined;
+      tools = (customProviderType === 'anthropic' || customProviderType === 'openai') ? true : customTools;
+      vision = (customProviderType === 'anthropic' || customProviderType === 'openai') ? true : customVision;
+    } else {
+      const m = models.find(x => x.id === selectedId);
+      if (!m) { setMsg({ type: 'error', text: 'Chọn model trước' }); return; }
+      provider = m.provider;
+      modelId = m.id;
+      baseUrl = m.baseUrl;
+      tools = m.toolsSupported;
+      vision = m.visionSupported;
+    }
+
     setSaving(true);
     try {
       const { url } = await getAgentServiceConfig();
@@ -221,10 +297,10 @@ function ProviderTab() {
         const cfg = r?.config;
         if (cfg?.nativeServerUrl) await pushNativeConfigToAgentService(url, cfg.nativeServerUrl, cfg.authToken);
       });
-      const ok = await pushProviderConfig(url, m.provider, apiKey.trim(), m.id, m.baseUrl, m.toolsSupported, m.visionSupported);
+      const ok = await pushProviderConfig(url, provider, apiKey.trim(), modelId, baseUrl, tools, vision);
       if (!ok) { setMsg({ type: 'error', text: 'Agent service không phản hồi' }); return; }
-      chrome.storage.sync.set({ agentProviderConfig: { modelId: m.id, provider: m.provider, apiKey: apiKey.trim(), model: m.id, baseUrl: m.baseUrl ?? '', toolsSupported: m.toolsSupported, visionSupported: m.visionSupported } });
-      setStatus({ configured: true, provider: m.provider, model: m.id });
+      chrome.storage.sync.set({ agentProviderConfig: { modelId, provider, apiKey: apiKey.trim(), model: modelId, baseUrl: baseUrl ?? '', toolsSupported: tools, visionSupported: vision } });
+      setStatus({ configured: true, provider, model: modelId });
       setMsg({ type: 'success', text: '✅ Provider đã cập nhật!' });
     } finally { setSaving(false); }
   };
@@ -233,7 +309,7 @@ function ProviderTab() {
   const categories = Array.from(new Set(models.map(m => m.category)));
 
   return (
-    <div>
+    <div style={{ maxWidth: 560 }}>
       <SectionTitle>LLM Provider</SectionTitle>
 
       {status && (
@@ -247,7 +323,8 @@ function ProviderTab() {
         </div>
       )}
 
-      <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Model selector */}
         <div>
           <Label>Model</Label>
           <select value={selectedId} onChange={e => setSelectedId(e.target.value)} style={{ ...inputStyle }}>
@@ -258,21 +335,130 @@ function ProviderTab() {
                 ))}
               </optgroup>
             ))}
+            <optgroup label="Custom">
+              <option value={CUSTOM_ID}>Custom (OpenAI-compatible)</option>
+            </optgroup>
           </select>
-          {selected && (
+          {selected && !isCustom && (
             <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
               <CapBadge label="Tools" active={selected.toolsSupported} />
               <CapBadge label="Vision" active={selected.visionSupported} />
+              {selected.baseUrl && <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 2 }}>{selected.baseUrl}</span>}
             </div>
           )}
         </div>
+
+        {/* Custom fields */}
+        {isCustom && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 16px', borderRadius: 10, background: '#f8f9fa', border: '1px solid #e5e7eb' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>Custom provider config</div>
+
+            {/* Provider type */}
+            <div>
+              <Label>Provider type</Label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {(['openai-compat', 'anthropic', 'openai'] as const).map(p => (
+                  <button
+                    key={p} type="button"
+                    onClick={() => setCustomProviderType(p)}
+                    style={{
+                      padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: 'pointer',
+                      background: customProviderType === p ? '#4f46e5' : 'transparent',
+                      color: customProviderType === p ? '#fff' : '#4f46e5',
+                      border: '1px solid #4f46e5',
+                    }}
+                  >{p}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Base URL — only for openai-compat */}
+            {customProviderType === 'openai-compat' && (
+              <div>
+                <Label>Base URL</Label>
+                <input
+                  style={inputStyle} type="url" value={customBaseUrl}
+                  onChange={e => setCustomBaseUrl(e.target.value)}
+                  placeholder="https://api.example.com/v1"
+                />
+                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+                  URL gốc của API (OpenAI-compatible). Ví dụ: OpenRouter, LiteLLM, Ollama, VNGCloud…
+                </div>
+              </div>
+            )}
+
+            {/* Model ID */}
+            <div>
+              <Label>Model ID</Label>
+              <input
+                style={inputStyle} value={customModelId}
+                onChange={e => setCustomModelId(e.target.value)}
+                placeholder={
+                  customProviderType === 'anthropic' ? 'claude-opus-4-8 / claude-sonnet-4-6…'
+                  : customProviderType === 'openai' ? 'gpt-4o / gpt-5…'
+                  : 'qwen3-70b / mistral-large / llama-3.3…'
+                }
+              />
+            </div>
+
+            {/* Tools + Vision — only relevant for openai-compat */}
+            {customProviderType === 'openai-compat' && (
+              <div>
+                <Label>Capabilities</Label>
+                <div style={{ display: 'flex', gap: 16 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 13 }}>
+                    <input type="checkbox" checked={customTools} onChange={e => setCustomTools(e.target.checked)} />
+                    <span>Tool calls</span>
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 13 }}>
+                    <input type="checkbox" checked={customVision} onChange={e => setCustomVision(e.target.checked)} />
+                    <span>Vision (image input)</span>
+                  </label>
+                </div>
+                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6 }}>
+                  Không chắc? Dùng <strong>🔍 Auto-detect</strong> bên dưới sau khi nhập API key.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* API Key */}
         <div>
           <Label>API Key</Label>
-          <input style={inputStyle} type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="your-api-key" autoComplete="off" />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              style={{ ...inputStyle, flex: 1 }}
+              type={showApiKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={e => setApiKey(e.target.value)}
+              placeholder="your-api-key"
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              onClick={() => setShowApiKey(v => !v)}
+              style={{ ...btnSecStyle, flexShrink: 0, padding: '8px 12px', fontSize: 12 }}
+            >
+              {showApiKey ? 'Hide' : 'Show'}
+            </button>
+          </div>
         </div>
+
         <Msg msg={msg} />
-        <div>
-          <button type="submit" disabled={saving || !apiKey.trim()} style={btnStyle}>{saving ? 'Đang lưu…' : '💾 Save Provider'}</button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button type="submit" disabled={saving || !apiKey.trim()} style={btnStyle}>
+            {saving ? 'Đang lưu…' : '💾 Save Provider'}
+          </button>
+          <button
+            type="button"
+            onClick={autoDetect}
+            disabled={detecting || !apiKey.trim()}
+            style={{ ...btnSecStyle, fontSize: 12 }}
+            title="Tự động kiểm tra model có hỗ trợ tool calls và vision không"
+          >
+            {detecting ? '⏳ Đang kiểm tra…' : '🔍 Auto-detect capabilities'}
+          </button>
         </div>
       </form>
     </div>

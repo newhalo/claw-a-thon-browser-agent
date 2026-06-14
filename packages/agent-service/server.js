@@ -100,6 +100,103 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Provider capability auto-detect ─────────────────────────────────────
+  if (url.pathname === '/detect-capabilities' && req.method === 'POST') {
+    try {
+      const { provider, baseUrl, modelId, apiKey } = await readBody(req);
+      if (!apiKey) { res.writeHead(400).end('apiKey required'); return; }
+
+      const effectiveBaseUrl = (provider === 'openai') ? 'https://api.openai.com/v1'
+        : (provider === 'anthropic') ? null   // Anthropic uses its own SDK — skip raw test
+        : baseUrl;
+
+      // Anthropic always supports tools + vision
+      if (provider === 'anthropic') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ toolsSupported: true, visionSupported: true }));
+        return;
+      }
+      // OpenAI known-good
+      if (provider === 'openai') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ toolsSupported: true, visionSupported: true }));
+        return;
+      }
+
+      if (!effectiveBaseUrl || !modelId) {
+        res.writeHead(400).end('baseUrl and modelId required for openai-compat detection');
+        return;
+      }
+
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+      const completionsUrl = `${effectiveBaseUrl.replace(/\/$/, '')}/chat/completions`;
+
+      // ── Test 1: tool calls ──────────────────────────────────────────────
+      let toolsSupported = false;
+      try {
+        const toolRes = await fetch(completionsUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: modelId,
+            messages: [{ role: 'user', content: 'Say "ok"' }],
+            tools: [{
+              type: 'function',
+              function: { name: 'noop', description: 'no-op', parameters: { type: 'object', properties: {} } },
+            }],
+            tool_choice: 'auto',
+            max_tokens: 16,
+          }),
+          signal: AbortSignal.timeout(12000),
+        });
+        if (toolRes.ok || toolRes.status === 200) {
+          toolsSupported = true;
+        } else {
+          const body = await toolRes.text();
+          // Some providers return 200 but error body on unsupported feature
+          toolsSupported = !body.toLowerCase().includes('tool') || toolRes.ok;
+        }
+      } catch { /* network error = unsupported or unreachable */ }
+
+      // ── Test 2: vision (image_url content) ─────────────────────────────
+      // Tiny 1×1 transparent PNG base64
+      const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQ' +
+                      'AABjkB6QAAAABJRU5ErkJggg==';
+      let visionSupported = false;
+      try {
+        const visionRes = await fetch(completionsUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            model: modelId,
+            messages: [{
+              role: 'user',
+              content: [
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${tinyPng}` } },
+                { type: 'text', text: 'Describe this image in one word.' },
+              ],
+            }],
+            max_tokens: 16,
+          }),
+          signal: AbortSignal.timeout(12000),
+        });
+        if (visionRes.ok) {
+          visionSupported = true;
+        } else {
+          const body = await visionRes.text();
+          visionSupported = !body.toLowerCase().includes('vision') && !body.toLowerCase().includes('image') && visionRes.ok;
+        }
+      } catch { /* vision not supported */ }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ toolsSupported, visionSupported }));
+    } catch (err) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ toolsSupported: false, visionSupported: false, error: err.message }));
+    }
+    return;
+  }
+
   // ── MCP server test (proxy — avoids CORS from browser) ───────────────────
   if (url.pathname === '/test-mcp' && req.method === 'POST') {
     try {

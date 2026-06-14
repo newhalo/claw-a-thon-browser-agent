@@ -458,6 +458,12 @@ Settings → group "Agent Skills":
 - [x] **Storage sync real-time**: `chrome.storage.sync.onChanged` — side panel tự update khi options page thay đổi skill settings
 - [x] **Options page full-screen**: `chrome.tabs.create` thay `openOptionsPage`, `open_in_tab: true` trong manifest, `width: 100%` layout
 
+### 2026-06-14 — Provider UX + auto-detect
+
+- [x] **Custom LLM Provider form**: Options page Provider tab thêm "Custom (OpenAI-compatible)" option, provider type selector (openai-compat / anthropic / openai), Base URL, Model ID, Tools/Vision checkboxes; restore đúng type từ storage
+- [x] **#13 toolsSupported auto-detect**: `POST /detect-capabilities` backend proxy — test tool call thật + vision test (1×1 PNG); `detectProviderCapabilities()` client helper; nút "🔍 Auto-detect capabilities" trong ProviderTab; anthropic/openai trả về known-good ngay
+- [x] **ExternalMcpGroupCard UX**: collapse/expand + per-tool toggle + bulk toggle + persist `disabledExternalMcpTools` storage; `disabledTools` denylist trong chat request
+
 ### 2026-06-14 — Sprint 3 + 4 complete
 
 - [x] **#5 Auto context compression**: `estimateTokens()` + `compressHistory()` với `generateText`, trigger ở 60k tokens, giữ 8 messages gần nhất, `X-Context-Compressed` response header, UI indicator trong chat (`routes/chat.js`)
@@ -473,7 +479,8 @@ Settings → group "Agent Skills":
 - [x] Sprint 2 remaining: #11 Skill management trong Settings ✅
 - [ ] Sprint 2 remaining: #10 Skill auto-suggest theo URL
 - [ ] Phase 6: Context Management — stream truncation investigation
-- [ ] Auto-detect toolsSupported cho openai-compat providers
+- [x] Auto-detect toolsSupported cho openai-compat providers ✅
+- [x] Custom LLM Provider form đủ fields (anthropic/openai/openai-compat type selector, base URL, model ID, tools/vision) ✅
 - [ ] Content script auto-reconnect sau SW restart
 
 ---
@@ -694,7 +701,7 @@ Thứ tự ưu tiên dựa trên **impact × effort**: fix blockers trước, qu
 | 10 | **Skill auto-suggest theo URL** | 5 | 🟡 Trung | S | 🔲 Chưa làm |
 | 11 | **Skill management trong Settings** | 5 | 🟢 Thấp | S | ✅ Done (Options page full-screen + custom skills từ URL/manual + storage sync) |
 | 12 | **Phase 3 — Long-term memory** | 3 | 🟡 Trung | L | 🔲 Chưa làm |
-| 13 | **toolsSupported auto-detect** | 2 | 🟢 Thấp | S | 🔲 Chưa làm |
+| 13 | **toolsSupported auto-detect** | 2 | 🟢 Thấp | S | ✅ Done (POST /detect-capabilities backend, Auto-detect button in ProviderTab, custom provider form với anthropic/openai/openai-compat type selector) |
 | 14 | **Content script auto-reconnect** | — | 🟢 Thấp | S | 🔲 Chưa làm (known Chrome MV3 limitation, workaround: refresh page) |
 | 15 | **User login khi startup extension** | 8 | 🔴 Cao | M | 🔲 Chưa làm |
 | 16 | **User-custom skills** | 8 | 🟡 Trung | M | 🔲 Chưa làm |
