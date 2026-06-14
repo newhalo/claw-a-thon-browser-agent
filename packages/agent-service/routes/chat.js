@@ -11,7 +11,7 @@
  * Response: text/event-stream (Vercel AI SDK data stream protocol)
  */
 
-import { streamText, tool } from 'ai';
+import { streamText, generateText, tool } from 'ai';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
 import { getModel, getProviderStatus, isToolsSupported, isVisionSupported } from '../providers/index.js';
@@ -91,6 +91,53 @@ Current date: ${DATE_STR}`;
 const SYSTEM_PROMPT_NO_TOOLS = `You are a helpful browser assistant. Answer the user's questions and help with browser-related tasks by providing clear instructions and information. Respond entirely in plain text — do not call any functions or tools.
 
 Current date: ${DATE_STR}`;
+
+// ── Context compression ───────────────────────────────────────────────────────
+
+const COMPRESS_TOKEN_THRESHOLD = 60_000; // ~240k chars; compress before hitting model limit
+const KEEP_RECENT = 8; // keep last N messages verbatim after compression
+
+function estimateTokens(messages) {
+  let chars = 0;
+  for (const m of messages) {
+    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    chars += content.length + 16; // ~16 chars overhead per message role/metadata
+  }
+  return Math.ceil(chars / 4); // 4 chars ≈ 1 token
+}
+
+async function compressHistory(messages) {
+  if (messages.length <= KEEP_RECENT) return { messages, compressed: false };
+
+  const toSummarize = messages.slice(0, messages.length - KEEP_RECENT);
+  const recent = messages.slice(messages.length - KEEP_RECENT);
+
+  const historyText = toSummarize.map(m => {
+    const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+    return `${m.role.toUpperCase()}: ${content}`;
+  }).join('\n\n');
+
+  try {
+    const { text } = await generateText({
+      model: getModel(),
+      maxRetries: 0,
+      messages: [
+        {
+          role: 'user',
+          content: `Summarize the following conversation history concisely, preserving all key facts, decisions, goals, and context needed to continue the task. Output a single paragraph starting with "Previous conversation summary:"\n\n${historyText}`,
+        },
+      ],
+    });
+
+    const summaryMsg = { role: 'user', content: text.trim() };
+    return { messages: [summaryMsg, ...recent], compressed: true };
+  } catch (err) {
+    console.warn('[chat] Context compression failed, using original messages:', err.message);
+    return { messages, compressed: false };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 function buildToolsFromMcp(mcpTools, enabledTools) {
   const allowed = enabledTools && enabledTools.length > 0
@@ -184,7 +231,7 @@ export default async function chatRoute(req, res) {
     return;
   }
 
-  const { messages = [], conversationId = uuidv4(), enabledTools, activeSkills = [] } = body;
+  const { messages = [], conversationId = uuidv4(), enabledTools, disabledTools, activeSkills = [], customSkills = [] } = body;
 
   if (!messages.length) {
     res.writeHead(400).end('messages array is required');
@@ -199,7 +246,12 @@ export default async function chatRoute(req, res) {
     console.warn('[chat] Could not fetch MCP tools:', err.message);
   }
 
-  const tools = buildToolsFromMcp(mcpTools, enabledTools);
+  // Apply disabledTools denylist (external MCP tools toggled off in UI)
+  const effectiveMcpTools = disabledTools?.length
+    ? mcpTools.filter(t => !disabledTools.includes(t.name))
+    : mcpTools;
+
+  const tools = buildToolsFromMcp(effectiveMcpTools, enabledTools);
 
   // Client (Zustand) already sends the full conversation history.
   // Do NOT prepend server-side history — that would duplicate messages and confuse the model.
@@ -223,7 +275,13 @@ export default async function chatRoute(req, res) {
 
     // Resolve active skills and merge their required tools into enabledTools
     const skillDefs = activeSkills.map(id => getSkillById(id)).filter(Boolean);
-    const skillSystemPrompts = skillDefs.map(s => s.systemPrompt).join('\n\n');
+    // Merge custom skills sent from extension (only those that are also in activeSkills)
+    const activeCustomSkills = customSkills.filter(s => activeSkills.includes(s.id));
+    const allSkillPrompts = [
+      ...skillDefs.map(s => s.systemPrompt),
+      ...activeCustomSkills.map(s => s.systemPrompt),
+    ];
+    const skillSystemPrompts = allSkillPrompts.join('\n\n');
 
     const basePrompt = toolsOk ? SYSTEM_PROMPT : SYSTEM_PROMPT_NO_TOOLS;
     const customPrompt = getCustomSystemPrompt();
@@ -233,14 +291,32 @@ export default async function chatRoute(req, res) {
       customPrompt ? `## Custom instructions\n${customPrompt}` : null,
     ].filter(Boolean).join('\n\n');
 
-    if (skillDefs.length > 0) {
-      console.log(`[chat] Active skills: ${skillDefs.map(s => s.id).join(', ')}`);
+    if (skillDefs.length > 0 || activeCustomSkills.length > 0) {
+      console.log(`[chat] Active skills: ${[...skillDefs.map(s => s.id), ...activeCustomSkills.map(s => s.id)].join(', ')}`);
+    }
+
+    // Auto-compress context if estimated token count exceeds threshold
+    let finalMessages = allMessages;
+    let contextCompressed = false;
+    const estimatedTokens = estimateTokens(allMessages);
+    if (estimatedTokens > COMPRESS_TOKEN_THRESHOLD) {
+      console.log(`[chat] Context too large (~${estimatedTokens} tokens), compressing...`);
+      const result = await compressHistory(allMessages);
+      finalMessages = result.messages;
+      contextCompressed = result.compressed;
+      if (contextCompressed) {
+        console.log(`[chat] Compressed ${allMessages.length} → ${finalMessages.length} messages`);
+      }
+    }
+
+    if (contextCompressed) {
+      res.setHeader('X-Context-Compressed', 'true');
     }
 
     const streamOpts = {
       model: getModel(),
       system: systemPrompt,
-      messages: allMessages,
+      messages: finalMessages,
       maxSteps: (hasTools && toolsOk) ? 25 : 1,
       // Disable built-in retries — 429s retry immediately with no backoff, making things worse.
       // The client should handle retry/backoff at a higher level.

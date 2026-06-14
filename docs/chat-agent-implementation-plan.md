@@ -450,12 +450,29 @@ Settings → group "Agent Skills":
 - [x] **Textarea vertical align**: `alignSelf: center` khi 1 dòng, `flex-start` khi multiline (`isMultiline` state)
 - [x] **Send button ghost style**: `SendButton` component — transparent background mặc định, accent on hover, container `flex-end` để button ghim xuống khi multiline
 
+### 2026-06-14 — Sprint 2 remaining (#11) + Settings UX overhaul
+
+- [x] **#11 Skill management trong Settings**: Options page full-screen (`entrypoints/options/`) với sidebar nav 4 tabs (General, Provider, Skills, Security)
+- [x] **Custom skills từ URL**: hỗ trợ skills.sh URL, GitHub directory (tự fetch `references/` qua API), raw SKILL.md — `hasScripts` warning badge
+- [x] **Create skill manual**: form nhập name, icon, description, category, instructions (markdown)
+- [x] **Storage sync real-time**: `chrome.storage.sync.onChanged` — side panel tự update khi options page thay đổi skill settings
+- [x] **Options page full-screen**: `chrome.tabs.create` thay `openOptionsPage`, `open_in_tab: true` trong manifest, `width: 100%` layout
+
+### 2026-06-14 — Sprint 3 + 4 complete
+
+- [x] **#5 Auto context compression**: `estimateTokens()` + `compressHistory()` với `generateText`, trigger ở 60k tokens, giữ 8 messages gần nhất, `X-Context-Compressed` response header, UI indicator trong chat (`routes/chat.js`)
+- [x] **#6 Chat sessions + History**: `ChatSession` interface, `loadSessionsFromStorage` / `saveSessionsToStorage` (max 50, sorted by `updatedAt`), `HistoryPanel` overlay, auto-save sau mỗi response, `handleNewChat` lưu session trước khi tạo mới (`chatStore.ts`, `ChatView.tsx`)
+- [x] **#9 Custom MCP Servers**: Options page tab "MCP" với Paste JSON import (Cursor/Claude config format), Manual form (type selector, URL, HeadersEditor), test qua backend proxy (`POST /test-mcp`), status/type badges, stdio warning; backend multi-server `mcp/client.js` với `Map<serverId, ServerState>`, stateless sentinel, SSE response parsing (`parseMcpResponse`), `toolRegistry` map, `_serverId`/`_serverName` annotations; `POST /external-mcp-config` push từ extension, real-time re-push qua `storage.onChanged` (`options/App.tsx`, `mcp/client.js`, `server.js`, `agentServiceClient.ts`)
+- [x] **ToolsPanel external MCP UX**: group theo server, `ExternalMcpGroupCard` với collapse/expand + bulk toggle + per-tool toggle, disabled state persist `chrome.storage.sync` key `disabledExternalMcpTools`, `disabledTools` denylist trong chat request (`ToolsPanel.tsx`, `chat.js`, `ChatView.tsx`)
+
 ### Pending
 - [ ] Phase 3: Long-term memory (SQLite + sqlite-vec) — stub hiện tại
-- [ ] Phase 4: Custom MCP servers
-- [ ] Phase 5 UX: #5 Auto context compression, #6 Chat sessions + History
-- [ ] Sprint 2 remaining: #10 Skill auto-suggest theo URL, #11 Skill management trong Settings
-- [ ] Phase 6: Context Management — auto compress + streaming truncation investigation
+- [x] Phase 4: Custom MCP servers ✅
+- [x] Phase 5 UX: #5 Auto context compression ✅
+- [x] Phase 5 UX: #6 Chat sessions + History ✅
+- [x] Sprint 2 remaining: #11 Skill management trong Settings ✅
+- [ ] Sprint 2 remaining: #10 Skill auto-suggest theo URL
+- [ ] Phase 6: Context Management — stream truncation investigation
 - [ ] Auto-detect toolsSupported cho openai-compat providers
 - [ ] Content script auto-reconnect sau SW restart
 
@@ -669,13 +686,13 @@ Thứ tự ưu tiên dựa trên **impact × effort**: fix blockers trước, qu
 | 2 | **Skeleton loading** | 6.1 | 🟡 Trung | XS | ✅ Done |
 | 3 | **Pre-defined Skills — backend** | 5 | 🔴 Cao | M | ✅ Done (agentskills.io SKILL.md format) |
 | 4 | **Pre-defined Skills — SkillsPopover UI** | 5 | 🔴 Cao | M | ✅ Done |
-| 5 | **Auto context compression** | 7.2 | 🔴 Cao | M | 🔲 Chưa làm |
-| 6 | **Chat sessions + History** | 6.2 | 🟡 Trung | M | 🔲 Chưa làm |
+| 5 | **Auto context compression** | 7.2 | 🔴 Cao | M | ✅ Done |
+| 6 | **Chat sessions + History** | 6.2 | 🟡 Trung | M | ✅ Done |
 | 7 | **Merge Tokens vào Settings** | 6.4 | 🟢 Thấp | XS | ✅ Done |
 | 8 | **Input ↑↓ message history** | 6.3 | 🟢 Thấp | XS | ✅ Done |
-| 9 | **Custom MCP Servers UI** | 4 | 🟡 Trung | M | 🔲 Chưa làm |
+| 9 | **Custom MCP Servers UI** | 4 | 🟡 Trung | M | ✅ Done (Options page MCP tab, paste JSON import, test proxy, multi-server backend) |
 | 10 | **Skill auto-suggest theo URL** | 5 | 🟡 Trung | S | 🔲 Chưa làm |
-| 11 | **Skill management trong Settings** | 5 | 🟢 Thấp | S | 🔲 Chưa làm |
+| 11 | **Skill management trong Settings** | 5 | 🟢 Thấp | S | ✅ Done (Options page full-screen + custom skills từ URL/manual + storage sync) |
 | 12 | **Phase 3 — Long-term memory** | 3 | 🟡 Trung | L | 🔲 Chưa làm |
 | 13 | **toolsSupported auto-detect** | 2 | 🟢 Thấp | S | 🔲 Chưa làm |
 | 14 | **Content script auto-reconnect** | — | 🟢 Thấp | S | 🔲 Chưa làm (known Chrome MV3 limitation, workaround: refresh page) |

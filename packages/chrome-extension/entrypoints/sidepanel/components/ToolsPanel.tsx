@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { getAgentServiceConfig, type CustomMcpServer, loadCustomMcpServers } from '../lib/agentServiceClient';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -317,6 +318,84 @@ function GroupCard({ group, onToggle }: { group: ToolGroup; onToggle: (name: str
   );
 }
 
+// ─── External MCP helpers ─────────────────────────────────────────────────────
+
+interface ExternalMcpTool { name: string; description?: string; serverName: string; serverId: string; }
+
+async function loadDisabledExternalTools(): Promise<Set<string>> {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get('disabledExternalMcpTools', (r) => {
+      resolve(new Set<string>(Array.isArray(r.disabledExternalMcpTools) ? r.disabledExternalMcpTools : []));
+    });
+  });
+}
+
+async function saveDisabledExternalTools(disabled: Set<string>): Promise<void> {
+  return new Promise((resolve) => {
+    chrome.storage.sync.set({ disabledExternalMcpTools: [...disabled] }, resolve);
+  });
+}
+
+// ─── External MCP group card ─────────────────────────────────────────────────
+
+function ExternalMcpGroupCard({
+  serverId, serverName, tools, disabled, onToggleTool,
+}: {
+  serverId: string;
+  serverName: string;
+  tools: ExternalMcpTool[];
+  disabled: Set<string>;
+  onToggleTool: (name: string, enabled: boolean) => void;
+}) {
+  const [collapsed, setCollapsed] = useState(true);
+
+  const enabledCount = tools.filter(t => !disabled.has(t.name)).length;
+  const allEnabled = enabledCount === tools.length;
+  const noneEnabled = enabledCount === 0;
+
+  const handleGroupToggle = () => {
+    const target = !allEnabled;
+    for (const t of tools) onToggleTool(t.name, target);
+  };
+
+  return (
+    <div style={{ background: '#0f1c30', border: '1px solid #1e3a5f', borderRadius: 8, marginBottom: 8, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 10px 10px 12px' }}>
+        <span style={{ fontSize: 14, flexShrink: 0 }}>🔌</span>
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left', minWidth: 0 }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 600, color: '#e2e8f0' }}>{serverName}</span>
+          <span style={{ fontSize: 10, color: '#475569' }}>{enabledCount}/{tools.length}</span>
+        </button>
+        <Toggle checked={!noneEnabled} onChange={handleGroupToggle} />
+        <button
+          onClick={() => setCollapsed((c) => !c)}
+          style={{ fontSize: 10, color: '#475569', background: 'transparent', border: 'none', cursor: 'pointer', flexShrink: 0, padding: '0 2px' }}
+        >
+          {collapsed ? '▶' : '▼'}
+        </button>
+      </div>
+      {!collapsed && (
+        <div style={{ borderTop: '1px solid #1e3a5f' }}>
+          {tools.map(t => (
+            <div key={t.name} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px 7px 12px', borderTop: '1px solid #1a2d47' }}>
+              <Toggle checked={!disabled.has(t.name)} onChange={(v) => onToggleTool(t.name, v)} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#93c5fd', fontFamily: 'monospace' }}>{t.name}</div>
+                {t.description && (
+                  <div style={{ fontSize: 11, color: '#475569', marginTop: 2, lineHeight: 1.4 }}>{t.description}</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main panel ───────────────────────────────────────────────────────────────
 
 function ToolsPanel({ compact = false }: { compact?: boolean }) {
@@ -325,6 +404,8 @@ function ToolsPanel({ compact = false }: { compact?: boolean }) {
   const [providerRunning, setProviderRunning] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [externalTools, setExternalTools] = useState<ExternalMcpTool[]>([]);
+  const [disabledExternal, setDisabledExternal] = useState<Set<string>>(new Set());
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = async (quiet = false) => {
@@ -340,10 +421,40 @@ function ToolsPanel({ compact = false }: { compact?: boolean }) {
     setLoading(false);
   };
 
+  const refreshExternal = async () => {
+    try {
+      const cfg = await getAgentServiceConfig();
+      const res = await fetch(`${cfg.url}/tools`, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) return;
+      const { tools } = await res.json() as { tools: { name: string; description?: string }[] };
+      const servers = await loadCustomMcpServers();
+      const serverNameMap: Record<string, string> = {};
+      for (const s of servers) serverNameMap[s.id] = s.name;
+      // Only show non-browser/non-website tools (those come from external MCP servers)
+      const external = tools
+        .filter((t: any) => !t.name.startsWith('browser_') && !t.name.startsWith('website_tool_'))
+        .map((t: any) => ({ name: t.name, description: t.description, serverId: t._serverId ?? 'unknown', serverName: t._serverName ?? t._serverId ?? 'External MCP' }));
+      setExternalTools(external);
+    } catch { /* agent-service might be down */ }
+  };
+
   useEffect(() => {
     void refresh();
-    pollRef.current = setInterval(() => void refresh(true), 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    void refreshExternal();
+    void loadDisabledExternalTools().then(setDisabledExternal);
+    pollRef.current = setInterval(() => { void refresh(true); void refreshExternal(); }, 10000);
+
+    const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (changes.disabledExternalMcpTools) {
+        const arr: string[] = changes.disabledExternalMcpTools.newValue ?? [];
+        setDisabledExternal(new Set(arr));
+      }
+    };
+    chrome.storage.onChanged.addListener(onStorageChanged);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      chrome.storage.onChanged.removeListener(onStorageChanged);
+    };
   }, []);
 
   // Optimistic toggle: update local state immediately, background handles storage
@@ -357,6 +468,15 @@ function ToolsPanel({ compact = false }: { compact?: boolean }) {
     setTotalTools((prev) => enabled ? prev + 1 : prev - 1);
     // Persist + re-register provider
     void toggleTool(toolName, enabled);
+  };
+
+  const handleToggleExternal = (toolName: string, enabled: boolean) => {
+    setDisabledExternal((prev) => {
+      const next = new Set(prev);
+      if (enabled) next.delete(toolName); else next.add(toolName);
+      void saveDisabledExternalTools(next);
+      return next;
+    });
   };
 
   const browserGroups = groups.filter((g) => g.type === 'browser');
@@ -425,6 +545,31 @@ function ToolsPanel({ compact = false }: { compact?: boolean }) {
             )}
             {websiteGroups.map((g) => <GroupCard key={g.id} group={g} onToggle={handleToggle} />)}
           </section>
+
+          {/* External MCP tools — grouped by server with collapse/toggle */}
+          {externalTools.length > 0 && (() => {
+            const byServer = externalTools.reduce<Record<string, ExternalMcpTool[]>>((acc, t) => {
+              (acc[t.serverId] = acc[t.serverId] || []).push(t);
+              return acc;
+            }, {});
+            return (
+              <section style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#475569', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}>
+                  External MCP
+                </div>
+                {Object.entries(byServer).map(([sid, tools]) => (
+                  <ExternalMcpGroupCard
+                    key={sid}
+                    serverId={sid}
+                    serverName={tools[0].serverName}
+                    tools={tools}
+                    disabled={disabledExternal}
+                    onToggleTool={handleToggleExternal}
+                  />
+                ))}
+              </section>
+            );
+          })()}
         </>
       )}
     </div>

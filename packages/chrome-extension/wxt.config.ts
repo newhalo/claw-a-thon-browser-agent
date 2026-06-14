@@ -43,6 +43,10 @@ export default defineConfig({
     action: {
       default_title: 'Claw-a-thon MCP',
     },
+    options_ui: {
+      page: 'options.html',
+      open_in_tab: true,
+    },
     content_security_policy: {
       extension_pages:
          "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http: https:",

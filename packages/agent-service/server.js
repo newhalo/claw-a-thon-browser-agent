@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { listTools, resetSession, setMcpConfig, getMcpConfig } from './mcp/client.js';
+import { listTools, resetSession, setMcpConfig, getMcpConfig, setExternalMcpServers, getExternalMcpServers } from './mcp/client.js';
 import { setProviderConfig, getProviderStatus } from './providers/index.js';
 import { setCustomSystemPrompt, getCustomSystemPrompt } from './config.js';
 import chatRoute, { screenshotStore } from './routes/chat.js';
@@ -24,7 +24,7 @@ function setCorsHeaders(req, res) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Expose-Headers', 'X-Conversation-Id');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Conversation-Id, X-Context-Compressed');
   }
 }
 
@@ -79,6 +79,48 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, mcpUrl }));
     } catch { res.writeHead(400).end('Invalid JSON'); }
+    return;
+  }
+
+  // ── External MCP servers ─────────────────────────────────────────────────
+  if (url.pathname === '/external-mcp-config' && req.method === 'POST') {
+    try {
+      const { servers: list } = await readBody(req);
+      if (!Array.isArray(list)) { res.writeHead(400).end('servers array required'); return; }
+      setExternalMcpServers(list);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, count: list.length }));
+    } catch { res.writeHead(400).end('Invalid JSON'); }
+    return;
+  }
+
+  if (url.pathname === '/external-mcp-config' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ servers: getExternalMcpServers() }));
+    return;
+  }
+
+  // ── MCP server test (proxy — avoids CORS from browser) ───────────────────
+  if (url.pathname === '/test-mcp' && req.method === 'POST') {
+    try {
+      const { url: mcpUrl, headers: mcpHeaders = {} } = await readBody(req);
+      if (!mcpUrl) { res.writeHead(400).end('url required'); return; }
+      const testRes = await fetch(mcpUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', ...mcpHeaders },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'initialize',
+          params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } },
+        }),
+        signal: AbortSignal.timeout(6000),
+      });
+      const text = await testRes.text().catch(() => '');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: testRes.ok, status: testRes.status, statusText: testRes.statusText, body: text.slice(0, 500) }));
+    } catch (err) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: err.message }));
+    }
     return;
   }
 

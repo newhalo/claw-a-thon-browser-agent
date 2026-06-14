@@ -1,18 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import ChatView from './views/ChatView';
 import SetupView from './views/SetupView';
-import Settings from './components/Settings';
 import {
   getAgentServiceConfig,
-  checkAgentServiceHealth,
   checkAgentServiceHealthFull,
   pushNativeConfigToAgentService,
   pushProviderConfig,
   pushSystemPrompt,
 } from './lib/agentServiceClient';
 import './App.css';
-
-type Page = 'chat' | 'settings';
 
 interface NativeConfig {
   nativeServerUrl?: string;
@@ -29,17 +25,12 @@ interface ProviderConfig {
 }
 
 function App() {
-  const [currentPage, setCurrentPage] = useState<Page>('chat');
-  const [isNativeConfigured, setIsNativeConfigured] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
-  const [agentAlive, setAgentAlive] = useState(false);
   const [agentUrl, setAgentUrl] = useState('');
   const [nativeCfg, setNativeCfg] = useState<NativeConfig>({});
-  const [ready, setReady] = useState(false); // prevents flash before init
+  const [ready, setReady] = useState(false);
 
-  useEffect(() => {
-    initApp();
-  }, []);
+  useEffect(() => { initApp(); }, []);
 
   async function initApp() {
     const { url } = await getAgentServiceConfig();
@@ -47,38 +38,17 @@ function App() {
 
     chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async (response) => {
       const cfg: NativeConfig = response?.config || {};
-      const nativeOk = !!(cfg?.nativeServerUrl && cfg?.authToken);
-      setIsNativeConfigured(nativeOk);
       setNativeCfg(cfg);
 
-      if (!nativeOk) {
-        setCurrentPage('settings');
-        setReady(true);
-        return;
-      }
-
-      // Check agent-service health + provider status
       const health = await checkAgentServiceHealthFull(url);
-      const alive = !!health;
-      setAgentAlive(alive);
-
-      if (alive) {
-        // Push native config first
+      if (health) {
         await pushNativeConfigToAgentService(url, cfg.nativeServerUrl!, cfg.authToken!);
-
-        // Restore custom system prompt
         chrome.storage.sync.get(['agentCustomSystemPrompt'], (r) => {
           if (r.agentCustomSystemPrompt) pushSystemPrompt(url, r.agentCustomSystemPrompt);
         });
-
         if (!health.provider?.configured) {
-          // Try restoring saved provider config
           const restored = await tryRestoreProviderConfig(url);
-          if (!restored) {
-            setShowSetup(true);
-            setReady(true);
-            return;
-          }
+          if (!restored) { setShowSetup(true); setReady(true); return; }
         }
       }
 
@@ -98,35 +68,6 @@ function App() {
     });
   }
 
-  const handleConfigSaved = async () => {
-    setIsNativeConfigured(true);
-    // Re-fetch config and re-check agent health
-    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async (response) => {
-      const cfg: NativeConfig = response?.config || {};
-      setNativeCfg(cfg);
-      if (!cfg?.nativeServerUrl) { setCurrentPage('chat'); return; }
-      const { url } = await getAgentServiceConfig();
-      setAgentUrl(url);
-      const health = await checkAgentServiceHealthFull(url);
-      const alive = !!health;
-      setAgentAlive(alive);
-      if (alive) {
-        await pushNativeConfigToAgentService(url, cfg.nativeServerUrl!, cfg.authToken!);
-        if (!health?.provider?.configured) {
-          const restored = await tryRestoreProviderConfig(url);
-          if (!restored) { setShowSetup(true); return; }
-        }
-      }
-      setShowSetup(false);
-      setCurrentPage('chat');
-    });
-  };
-
-  const handleSetupDone = () => {
-    setShowSetup(false);
-    setCurrentPage('chat');
-  };
-
   if (!ready) {
     return (
       <div className="app" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -140,40 +81,22 @@ function App() {
       <header className="app-header">
         <h1>🤖 Browser Agent</h1>
         <nav className="app-nav">
-          <button
-            className={`nav-btn ${currentPage === 'chat' && !showSetup ? 'active' : ''}`}
-            onClick={() => { setShowSetup(false); setCurrentPage('chat'); }}
-            title="Chat"
-          >💬</button>
-          <button
-            className={`nav-btn ${currentPage === 'settings' ? 'active' : ''}`}
-            onClick={() => setCurrentPage('settings')}
-            title="Settings"
-          >⚙️</button>
+          <button className="nav-btn" onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })} title="Settings">⚙️</button>
         </nav>
       </header>
 
       <main className="app-content">
-        {/* Setup view — shown when provider not configured */}
-        {showSetup && (
+        {showSetup ? (
           <SetupView
             agentServiceUrl={agentUrl}
             nativeServerUrl={nativeCfg.nativeServerUrl || ''}
             nativeAuthToken={nativeCfg.authToken || ''}
-            onDone={handleSetupDone}
+            onDone={() => setShowSetup(false)}
           />
-        )}
-
-        {/* ChatView always mounted to preserve Zustand store state */}
-        {!showSetup && (
-          <>
-            <div style={{ display: currentPage === 'chat' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
-              <ChatView onOpenSettings={() => setCurrentPage('settings')} />
-            </div>
-            {currentPage === 'settings' && (
-              <Settings onConfigSaved={handleConfigSaved} />
-            )}
-          </>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <ChatView onOpenSettings={() => chrome.tabs.create({ url: chrome.runtime.getURL("options.html") })} />
+          </div>
         )}
       </main>
     </div>

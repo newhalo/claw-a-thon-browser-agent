@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import * as Popover from '@radix-ui/react-popover';
 import ToolsPopover from '../components/ToolsPopover';
-import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService, fetchModels, fetchSkills, type PredefinedModel, type Skill } from '../lib/agentServiceClient';
-import { useChatStore, type ChatMessage, type ToolInvocation, type MessageSegment } from '../lib/chatStore';
+import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService, fetchModels, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
+import { useChatStore, type ChatMessage, type ToolInvocation, type MessageSegment, type ChatSession, sessionTitle, loadSessionsFromStorage, saveSessionsToStorage, upsertSession } from '../lib/chatStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -310,6 +310,84 @@ function SkeletonMessage() {
   );
 }
 
+// ─── History panel ────────────────────────────────────────────────────────────
+
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return 'vừa xong';
+  if (mins < 60) return `${mins} phút trước`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} giờ trước`;
+  const days = Math.floor(hrs / 24);
+  return `${days} ngày trước`;
+}
+
+function HistoryPanel({ sessions, currentId, onLoad, onDelete, onClose }: {
+  sessions: ChatSession[];
+  currentId: string;
+  onLoad: (s: ChatSession) => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  const sorted = [...sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 100,
+      background: 'var(--bg-base)', display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 12px', borderBottom: '1px solid var(--border)',
+        background: 'var(--bg-surface)',
+      }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text-secondary)', padding: '0 4px', lineHeight: 1 }}>←</button>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>Lịch sử chat</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sorted.length} phiên</span>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+        {sorted.length === 0 && (
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: 24 }}>
+            Chưa có phiên chat nào được lưu
+          </div>
+        )}
+        {sorted.map(s => {
+          const isCurrent = s.id === currentId;
+          return (
+            <div
+              key={s.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '8px 12px', cursor: 'pointer',
+                background: isCurrent ? 'rgba(79,70,229,0.08)' : 'transparent',
+                borderLeft: isCurrent ? '3px solid var(--accent)' : '3px solid transparent',
+                transition: 'background 0.12s',
+              }}
+              onClick={() => onLoad(s)}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: isCurrent ? 600 : 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {s.title}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
+                  {s.messages.length} tin · {formatRelativeTime(s.updatedAt)}
+                </div>
+              </div>
+              <button
+                onClick={e => { e.stopPropagation(); onDelete(s.id); }}
+                title="Xoá phiên"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', padding: '2px 4px', borderRadius: 4, flexShrink: 0, opacity: 0.6 }}
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Send button ──────────────────────────────────────────────────────────────
 
 function SendButton({ input, onSend }: { input: string; onSend: () => void }) {
@@ -359,17 +437,22 @@ function TypingDots() {
 interface Props { onOpenSettings: () => void }
 
 export default function ChatView({ onOpenSettings }: Props) {
-  const { messages, conversationId, isLoading, streamError, activeSkills, addMessage, updateLastAssistant, setLoading, setError, clearHistory, toggleSkill } = useChatStore();
+  const { messages, conversationId, currentSessionId, isLoading, streamError, activeSkills, addMessage, updateLastAssistant, setLoading, setError, newSession, loadSession, toggleSkill } = useChatStore();
   const [input, setInput] = useState('');
   const [serviceUrl, setServiceUrl] = useState('http://localhost:3000');
   const [online, setOnline] = useState<boolean | null>(null);
   const [models, setModels] = useState<PredefinedModel[]>([]);
   const [activeModelId, setActiveModelId] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [disabledSkillIds, setDisabledSkillIds] = useState<string[]>([]);
+  const [disabledExternalTools, setDisabledExternalTools] = useState<string[]>([]);
+  const [customSkills, setCustomSkills] = useState<CustomSkill[]>([]);
   const [isWaitingFirstChunk, setIsWaitingFirstChunk] = useState(false);
   const [sentHistory, setSentHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [isMultiline, setIsMultiline] = useState(false);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -390,10 +473,38 @@ export default function ChatView({ onOpenSettings }: Props) {
       });
       fetchSkills(cfg.url).then(setSkills);
     });
+    loadDisabledSkills().then(setDisabledSkillIds);
+    loadCustomSkills().then(setCustomSkills);
+    chrome.storage.sync.get('disabledExternalMcpTools', r => {
+      setDisabledExternalTools(Array.isArray(r.disabledExternalMcpTools) ? r.disabledExternalMcpTools : []);
+    });
+
+    // Sync skill settings changed from options page
+    const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (changes.disabledSkills)          setDisabledSkillIds(changes.disabledSkills.newValue ?? []);
+      if (changes.customSkills)            setCustomSkills(changes.customSkills.newValue ?? []);
+      if (changes.customMcpServers)        doPushMcp();
+      if (changes.disabledExternalMcpTools) setDisabledExternalTools(changes.disabledExternalMcpTools.newValue ?? []);
+    };
+    chrome.storage.sync.onChanged.addListener(onStorageChanged);
+
     // Restore sent message history
     chrome.storage.local.get(['chatSentHistory'], r => {
       if (Array.isArray(r.chatSentHistory)) setSentHistory(r.chatSentHistory);
     });
+
+    // Load session history
+    loadSessionsFromStorage().then(setSessions);
+
+    // Push external MCP servers to agent-service on mount and whenever config changes
+    const doPushMcp = async () => {
+      const cfg = await getAgentServiceConfig();
+      const mcpServers = await loadCustomMcpServers();
+      pushExternalMcpServers(cfg.url, mcpServers);
+    };
+    doPushMcp();
+
+    return () => chrome.storage.sync.onChanged.removeListener(onStorageChanged);
   }, []);
 
   useEffect(() => {
@@ -432,10 +543,12 @@ export default function ChatView({ onOpenSettings }: Props) {
     historyForRequest.push({ role: 'user', content: text });
 
     try {
+      const chatBody = { messages: historyForRequest, conversationId, activeSkills, customSkills: customSkills.filter(s => activeSkills.includes(s.id)), ...(disabledExternalTools.length ? { disabledTools: disabledExternalTools } : {}) };
+
       let res = await fetch(`${serviceUrl}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: historyForRequest, conversationId, activeSkills }),
+        body: JSON.stringify(chatBody),
         signal: abortRef.current.signal,
       });
 
@@ -448,7 +561,7 @@ export default function ChatView({ onOpenSettings }: Props) {
             res = await fetch(`${serviceUrl}/chat`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ messages: historyForRequest, conversationId, activeSkills }),
+              body: JSON.stringify(chatBody),
               signal: abortRef.current?.signal,
             });
           }
@@ -456,6 +569,13 @@ export default function ChatView({ onOpenSettings }: Props) {
       }
 
       if (!res.ok || !res.body) throw new Error(`Server error: ${res.status}`);
+
+      if (res.headers.get('X-Context-Compressed') === 'true') {
+        updateLastAssistant(m => ({
+          ...m,
+          segments: [{ type: 'text', content: '> 🗜 **Context đã được nén** — lịch sử hội thoại cũ đã được tóm tắt để tiết kiệm context window.\n\n' }],
+        }));
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -550,6 +670,24 @@ export default function ChatView({ onOpenSettings }: Props) {
       setLoading(false);
       setIsWaitingFirstChunk(false);
       abortRef.current = null;
+      // Auto-save session after response completes (use store snapshot via getter)
+      const { messages: finalMsgs, conversationId: finalConvId, currentSessionId: finalSessionId } = useChatStore.getState();
+      if (finalMsgs.length > 0) {
+        const session: ChatSession = {
+          id: finalSessionId,
+          title: sessionTitle(finalMsgs),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          messages: finalMsgs,
+          conversationId: finalConvId,
+        };
+        setSessions(prev => {
+          const existing = prev.find(s => s.id === finalSessionId);
+          const updated = upsertSession(prev, { ...session, createdAt: existing?.createdAt ?? session.createdAt });
+          saveSessionsToStorage(updated);
+          return updated;
+        });
+      }
     }
   }, [messages, isLoading, serviceUrl, conversationId]);
 
@@ -568,6 +706,43 @@ export default function ChatView({ onOpenSettings }: Props) {
     });
   }, [models, serviceUrl]);
 
+  const handleNewChat = useCallback(() => {
+    // Save current session before clearing (if it has messages)
+    if (messages.length > 0) {
+      const session: ChatSession = {
+        id: currentSessionId,
+        title: sessionTitle(messages),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages,
+        conversationId,
+      };
+      setSessions(prev => {
+        const existing = prev.find(s => s.id === currentSessionId);
+        const updated = upsertSession(prev, { ...session, createdAt: existing?.createdAt ?? session.createdAt });
+        saveSessionsToStorage(updated);
+        return updated;
+      });
+    }
+    newSession();
+    setShowHistory(false);
+  }, [messages, currentSessionId, conversationId, newSession]);
+
+  const handleLoadSession = useCallback((session: ChatSession) => {
+    loadSession(session);
+    setShowHistory(false);
+  }, [loadSession]);
+
+  const handleDeleteSession = useCallback((id: string) => {
+    setSessions(prev => {
+      const updated = prev.filter(s => s.id !== id);
+      saveSessionsToStorage(updated);
+      return updated;
+    });
+    // If deleting current session, start fresh
+    if (id === currentSessionId) newSession();
+  }, [currentSessionId, newSession]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); return; }
     if (e.key === 'ArrowUp' && sentHistory.length > 0) {
@@ -585,7 +760,18 @@ export default function ChatView({ onOpenSettings }: Props) {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', position: 'relative' }}>
+
+      {/* History overlay */}
+      {showHistory && (
+        <HistoryPanel
+          sessions={sessions}
+          currentId={currentSessionId}
+          onLoad={handleLoadSession}
+          onDelete={handleDeleteSession}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
 
       {/* Status bar */}
       <div style={{
@@ -598,15 +784,20 @@ export default function ChatView({ onOpenSettings }: Props) {
           background: online === null ? 'var(--warning)' : online ? 'var(--success)' : 'var(--error)',
         }} />
         <span style={{ flex: 1 }}>agent-service</span>
-        {messages.length > 0 && (
-          <button
-            onClick={clearHistory}
-            title="Clear conversation"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 11, padding: '1px 4px', borderRadius: 4 }}
-          >
-            ✕ Clear
-          </button>
-        )}
+        <button
+          onClick={() => setShowHistory(v => !v)}
+          title="Lịch sử chat"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, padding: '1px 4px', borderRadius: 4 }}
+        >
+          ⏱
+        </button>
+        <button
+          onClick={handleNewChat}
+          title="Chat mới"
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '1px 4px', borderRadius: 4, fontWeight: 600 }}
+        >
+          +
+        </button>
       </div>
 
       {/* Messages */}
@@ -654,7 +845,15 @@ export default function ChatView({ onOpenSettings }: Props) {
         {/* Toolbar */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 6, alignItems: 'center' }}>
           <ToolsPopover />
-          <SkillsPopover skills={skills} activeIds={activeSkills} onToggle={toggleSkill} disabled={isLoading} />
+          <SkillsPopover
+            skills={[
+              ...skills.filter(s => !disabledSkillIds.includes(s.id)),
+              ...customSkills.filter(s => !disabledSkillIds.includes(s.id)),
+            ]}
+            activeIds={activeSkills}
+            onToggle={toggleSkill}
+            disabled={isLoading}
+          />
           {/* Model selector */}
           {models.length > 0 && (
             <select

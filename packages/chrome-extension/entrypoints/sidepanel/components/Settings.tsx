@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getAgentServiceConfig, checkAgentServiceHealthFull, pushProviderConfig, pushNativeConfigToAgentService, pushSystemPrompt, fetchModels, type PredefinedModel } from '../lib/agentServiceClient';
+import { getAgentServiceConfig, checkAgentServiceHealthFull, pushProviderConfig, pushNativeConfigToAgentService, pushSystemPrompt, fetchModels, fetchSkills, fetchSkillFromUrl, loadCustomSkills, saveCustomSkills, loadDisabledSkills, saveDisabledSkills, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
 import TokensPanel from './TokensPanel';
 
 interface SettingsProps {
@@ -18,6 +18,14 @@ function Settings({ onConfigSaved }: SettingsProps) {
   const [promptSaving, setPromptSaving] = useState(false);
   const [promptMsg, setPromptMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Skills management
+  const [builtinSkills, setBuiltinSkills] = useState<Skill[]>([]);
+  const [customSkills, setCustomSkills] = useState<CustomSkill[]>([]);
+  const [disabledSkills, setDisabledSkills] = useState<string[]>([]);
+  const [skillUrl, setSkillUrl] = useState('');
+  const [skillFetching, setSkillFetching] = useState(false);
+  const [skillMsg, setSkillMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
   // Provider config
   const [showProviderForm, setShowProviderForm] = useState(false);
   const [providerStatus, setProviderStatus] = useState<{ configured: boolean; provider?: string | null; model?: string | null } | null>(null);
@@ -35,11 +43,13 @@ function Settings({ onConfigSaved }: SettingsProps) {
     getAgentServiceConfig().then(({ url }) => {
       fetchModels(url).then(list => {
         setModels(list);
-        // Set default selection if none saved yet
         const def = list.find(m => m.default) ?? list[0];
         if (def) setSelectedModelId(prev => prev || def.id);
       });
+      fetchSkills(url).then(setBuiltinSkills);
     });
+    loadCustomSkills().then(setCustomSkills);
+    loadDisabledSkills().then(setDisabledSkills);
   }, []);
 
   const loadConfig = () => {
@@ -86,6 +96,47 @@ function Settings({ onConfigSaved }: SettingsProps) {
         if (saved.modelId || saved.model) setSelectedModelId(saved.modelId || saved.model);
       }
     });
+  };
+
+  const handleToggleSkill = async (id: string) => {
+    const next = disabledSkills.includes(id)
+      ? disabledSkills.filter(x => x !== id)
+      : [...disabledSkills, id];
+    setDisabledSkills(next);
+    await saveDisabledSkills(next);
+  };
+
+  const handleAddCustomSkill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSkillMsg(null);
+    if (!skillUrl.trim()) return;
+    setSkillFetching(true);
+    try {
+      const skill = await fetchSkillFromUrl(skillUrl.trim());
+      if (customSkills.find(s => s.id === skill.id)) {
+        setSkillMsg({ type: 'error', text: 'Skill này đã được thêm' });
+        return;
+      }
+      const next = [...customSkills, { ...skill, addedAt: Date.now() }];
+      setCustomSkills(next);
+      await saveCustomSkills(next);
+      setSkillUrl('');
+      setSkillMsg({ type: 'success', text: `✅ Đã thêm skill "${skill.name}"` });
+    } catch (err) {
+      setSkillMsg({ type: 'error', text: `❌ ${err instanceof Error ? err.message : 'Không tải được SKILL.md'}` });
+    } finally {
+      setSkillFetching(false);
+    }
+  };
+
+  const handleDeleteCustomSkill = async (id: string) => {
+    const next = customSkills.filter(s => s.id !== id);
+    setCustomSkills(next);
+    await saveCustomSkills(next);
+    // also remove from disabled if present
+    const nextDisabled = disabledSkills.filter(x => x !== id);
+    setDisabledSkills(nextDisabled);
+    await saveDisabledSkills(nextDisabled);
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -323,6 +374,107 @@ function Settings({ onConfigSaved }: SettingsProps) {
             <li>Enter server URL + token → Save</li>
             <li>Cấu hình LLM provider ở trên</li>
           </ol>
+        </div>
+
+        {/* ── Agent Skills ──────────────────────────────────── */}
+        <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 18 }}>
+          <h2 style={{ marginBottom: 12 }}>Agent Skills</h2>
+
+          {/* Built-in skills */}
+          {builtinSkills.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Built-in</div>
+              {builtinSkills.map(skill => {
+                const disabled = disabledSkills.includes(skill.id);
+                return (
+                  <div key={skill.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 16 }}>{skill.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 500, color: disabled ? 'var(--text-muted)' : 'var(--text-primary)' }}>{skill.name}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill.description}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSkill(skill.id)}
+                      style={{
+                        flexShrink: 0, fontSize: 11, padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
+                        background: disabled ? 'transparent' : 'rgba(16,185,129,0.1)',
+                        border: `1px solid ${disabled ? 'var(--border)' : 'rgba(16,185,129,0.3)'}`,
+                        color: disabled ? 'var(--text-muted)' : 'var(--success, #10b981)',
+                      }}
+                    >
+                      {disabled ? 'Off' : 'On'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Custom skills */}
+          {customSkills.length > 0 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Custom</div>
+              {customSkills.map(skill => {
+                const disabled = disabledSkills.includes(skill.id);
+                return (
+                  <div key={skill.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 16 }}>{skill.icon}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 500, color: disabled ? 'var(--text-muted)' : 'var(--text-primary)' }}>{skill.name}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill.sourceUrl}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleToggleSkill(skill.id)}
+                      style={{
+                        flexShrink: 0, fontSize: 11, padding: '3px 8px', borderRadius: 6, cursor: 'pointer',
+                        background: disabled ? 'transparent' : 'rgba(16,185,129,0.1)',
+                        border: `1px solid ${disabled ? 'var(--border)' : 'rgba(16,185,129,0.3)'}`,
+                        color: disabled ? 'var(--text-muted)' : 'var(--success, #10b981)',
+                      }}
+                    >
+                      {disabled ? 'Off' : 'On'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCustomSkill(skill.id)}
+                      title="Xoá skill"
+                      style={{ flexShrink: 0, fontSize: 11, padding: '3px 7px', borderRadius: 6, cursor: 'pointer', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-muted)' }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Add custom skill from URL */}
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Thêm từ URL</div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.5 }}>
+            Nhập URL trỏ đến file <code>SKILL.md</code> — hỗ trợ GitHub, GitLab, hoặc URL raw bất kỳ.
+          </p>
+          <form onSubmit={handleAddCustomSkill} style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="url"
+              value={skillUrl}
+              onChange={e => { setSkillUrl(e.target.value); setSkillMsg(null); }}
+              placeholder="https://github.com/user/repo/blob/main/SKILL.md"
+              style={{ flex: 1, padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 12, background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontFamily: 'inherit' }}
+            />
+            <button type="submit" disabled={skillFetching || !skillUrl.trim()} style={{ flexShrink: 0 }}>
+              {skillFetching ? '…' : '+ Add'}
+            </button>
+          </form>
+          {skillMsg && (
+            <div style={{
+              marginTop: 6, padding: '6px 10px', borderRadius: 6, fontSize: 11,
+              background: skillMsg.type === 'error' ? 'rgba(239,68,68,0.07)' : 'rgba(16,185,129,0.07)',
+              border: `1px solid ${skillMsg.type === 'error' ? 'rgba(239,68,68,0.25)' : 'rgba(16,185,129,0.25)'}`,
+              color: skillMsg.type === 'error' ? 'var(--error)' : 'var(--success, #10b981)',
+            }}>{skillMsg.text}</div>
+          )}
         </div>
 
         {/* ── MCP Client Tokens ─────────────────────────────── */}
