@@ -180,12 +180,11 @@ const recentlyConsolidated = new Map(); // conversationId → timestamp
 export async function consolidateConversation(conversationId, messages, getModelFn, getEmbeddingFn) {
   // Skip if too few messages (< 4 = 2 exchanges)
   const userMsgs = messages.filter(m => m.role === 'user');
-  console.log(`[memory] consolidate start conv=${conversationId} userMsgs=${userMsgs.length} totalMsgs=${messages.length}`);
-  if (userMsgs.length < 2) { console.log('[memory] skip: < 2 user messages'); return; }
+  if (userMsgs.length < 2) return;
 
   // Debounce — don't consolidate the same conversation within 5 minutes
   const last = recentlyConsolidated.get(conversationId);
-  if (last && Date.now() - last < 5 * 60 * 1000) { console.log('[memory] skip: debounce'); return; }
+  if (last && Date.now() - last < 5 * 60 * 1000) return;
   recentlyConsolidated.set(conversationId, Date.now());
 
   try {
@@ -220,7 +219,6 @@ export async function consolidateConversation(conversationId, messages, getModel
         });
         const data = await res.json();
         summary = data.choices?.[0]?.message?.content?.trim();
-        console.log('[memory] Summarized:', summary?.slice(0, 80));
       } catch (err) {
         console.warn('[memory] Summarization failed, using fallback:', err.message);
         summary = null;
