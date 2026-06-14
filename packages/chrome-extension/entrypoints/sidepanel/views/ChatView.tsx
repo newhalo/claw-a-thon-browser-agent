@@ -22,7 +22,7 @@ async function repushProviderConfig(agentServiceUrl: string): Promise<boolean> {
         // Re-push provider config
         const saved = result.agentProviderConfig;
         if (!saved?.provider || !saved?.apiKey) { resolve(false); return; }
-        const ok = await pushProviderConfig(agentServiceUrl, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported);
+        const ok = await pushProviderConfig(agentServiceUrl, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported, saved.embeddingModel);
         resolve(ok);
       } catch {
         resolve(false);

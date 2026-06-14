@@ -58,7 +58,7 @@ const envConfig = {
   visionSupported: process.env.CUSTOM_VISION_SUPPORTED === 'true' ? true : null,
 };
 
-export function setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported }) {
+export function setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported, embeddingModel }) {
   runtimeConfig = {
     provider,
     apiKey,
@@ -66,6 +66,7 @@ export function setProviderConfig({ provider, apiKey, model, baseUrl, toolsSuppo
     baseUrl: baseUrl || null,
     toolsSupported: toolsSupported ?? null,
     visionSupported: visionSupported ?? null,
+    embeddingModel: embeddingModel || null,
   };
   _instance = null;
   console.log(`[provider] Runtime config updated — provider: ${provider}${toolsSupported != null ? `, tools: ${toolsSupported}` : ''}${visionSupported != null ? `, vision: ${visionSupported}` : ''}`);
@@ -153,11 +154,15 @@ export function getEmbeddingModel() {
   if (!cfg.apiKey) return null;
   try {
     switch (cfg.provider) {
-      case 'openai':
-        return createOpenAI({ apiKey: cfg.apiKey }).embedding('text-embedding-3-small');
-      case 'openai-compat':
+      case 'openai': {
+        const modelId = cfg.embeddingModel || 'text-embedding-3-small';
+        return createOpenAI({ apiKey: cfg.apiKey }).embedding(modelId);
+      }
+      case 'openai-compat': {
         if (!cfg.baseUrl) return null;
-        return createOpenAI({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey }).embedding('text-embedding-3-small');
+        const modelId = cfg.embeddingModel || 'text-embedding-3-small';
+        return createOpenAI({ baseURL: cfg.baseUrl, apiKey: cfg.apiKey }).embedding(modelId);
+      }
       default:
         return null;
     }

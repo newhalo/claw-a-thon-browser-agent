@@ -5,3 +5,4 @@ packages/test-agent
 packages/WebMCP
 .history
 .env
+packages/agent-service/data/*.db

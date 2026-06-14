@@ -364,7 +364,8 @@ export default async function chatRoute(req, res) {
           appendMessages(conversationId, fullHistory);
         }
         // Async long-term memory consolidation — fire and forget, never blocks stream
-        consolidateConversation(conversationId, fullHistory, getModel, getEmbeddingModel).catch(() => {});
+        consolidateConversation(conversationId, fullHistory, getModel, getEmbeddingModel)
+          .catch(err => console.warn('[memory] consolidation error:', err?.message || err));
       },
     };
 

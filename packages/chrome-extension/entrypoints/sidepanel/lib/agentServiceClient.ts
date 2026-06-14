@@ -238,12 +238,13 @@ export async function pushProviderConfig(
   baseUrl?: string,
   toolsSupported?: boolean,
   visionSupported?: boolean,
+  embeddingModel?: string,
 ): Promise<boolean> {
   try {
     const res = await fetch(`${agentServiceUrl}/provider-config`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported }),
+      body: JSON.stringify({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported, embeddingModel }),
       signal: AbortSignal.timeout(5000),
     });
     return res.ok;

@@ -195,6 +195,7 @@ function ProviderTab() {
   const [customModelId, setCustomModelId] = useState('');
   const [customTools, setCustomTools] = useState(true);
   const [customVision, setCustomVision] = useState(false);
+  const [embeddingModelId, setEmbeddingModelId] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [detecting, setDetecting] = useState(false);
   const [status, setStatus] = useState<{ configured: boolean; provider?: string | null; model?: string | null } | null>(null);
@@ -211,6 +212,7 @@ function ProviderTab() {
           const match = list.find(m => m.id === id);
           const def = list.find(m => m.default) ?? list[0];
           if (saved?.apiKey) setApiKey(saved.apiKey);
+          if (saved?.embeddingModel) setEmbeddingModelId(saved.embeddingModel);
           if (match) {
             setSelectedId(match.id);
           } else if (id) {
@@ -298,9 +300,10 @@ function ProviderTab() {
         const cfg = r?.config;
         if (cfg?.nativeServerUrl) await pushNativeConfigToAgentService(url, cfg.nativeServerUrl, cfg.authToken);
       });
-      const ok = await pushProviderConfig(url, provider, apiKey.trim(), modelId, baseUrl, tools, vision);
+      const embModel = embeddingModelId.trim() || undefined;
+      const ok = await pushProviderConfig(url, provider, apiKey.trim(), modelId, baseUrl, tools, vision, embModel);
       if (!ok) { setMsg({ type: 'error', text: 'Agent service không phản hồi' }); return; }
-      chrome.storage.sync.set({ agentProviderConfig: { modelId, provider, apiKey: apiKey.trim(), model: modelId, baseUrl: baseUrl ?? '', toolsSupported: tools, visionSupported: vision } });
+      chrome.storage.sync.set({ agentProviderConfig: { modelId, provider, apiKey: apiKey.trim(), model: modelId, baseUrl: baseUrl ?? '', toolsSupported: tools, visionSupported: vision, embeddingModel: embModel } });
       setStatus({ configured: true, provider, model: modelId });
       setMsg({ type: 'success', text: '✅ Provider đã cập nhật!' });
     } finally { setSaving(false); }
@@ -443,6 +446,24 @@ function ProviderTab() {
             >
               {showApiKey ? 'Hide' : 'Show'}
             </button>
+          </div>
+        </div>
+
+        {/* Embedding Model */}
+        <div>
+          <Label>Embedding Model <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional — dùng cho long-term memory)</span></Label>
+          <input
+            style={inputStyle}
+            value={embeddingModelId}
+            onChange={e => setEmbeddingModelId(e.target.value)}
+            placeholder={
+              selectedId === CUSTOM_ID && customProviderType === 'openai-compat'
+                ? 'qwen/qwen3-embedding-8b'
+                : 'text-embedding-3-small'
+            }
+          />
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
+            Để trống nếu không cần memory. VNGCloud: <code>qwen/qwen3-embedding-8b</code>
           </div>
         </div>
 
