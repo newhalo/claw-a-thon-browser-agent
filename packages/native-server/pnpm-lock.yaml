@@ -11,8 +11,17 @@ importers:
       '@mcp-b/native-server':
         specifier: ^1.0.47
         version: 1.0.47(zod@4.4.3)
+    devDependencies:
+      env-cmd:
+        specifier: ^11.0.0
+        version: 11.0.0
 
 packages:
+
+  '@commander-js/extra-typings@13.1.0':
+    resolution: {integrity: sha512-q5P52BYb1hwVWE6dtID7VvuJWrlfbCv4klj7BjUUOqMz4jbSZD4C9fJ9lRjL2jnBGTg+gDDlaXN51rkWcLk4fg==}
+    peerDependencies:
+      commander: ~13.1.0
 
   '@fastify/ajv-compiler@4.0.5':
     resolution: {integrity: sha512-KoWKW+MhvfTRWL4qrhUwAAZoaChluo0m0vbiJlGMt2GXvL4LVPQEjt8kSpHI3IBq5Rez8fg+XeH3cneztq+C7A==}
@@ -171,6 +180,11 @@ packages:
   encodeurl@2.0.0:
     resolution: {integrity: sha512-Q0n9HRi4m6JuGIV1eFlmvJB7ZEVxu93IrMyiMsGC0lrMJMWzRgx6WGquyfQgZVb31vhGgXnfmPNNXmxnOkRBrg==}
     engines: {node: '>= 0.8'}
+
+  env-cmd@11.0.0:
+    resolution: {integrity: sha512-gnG7H1PlwPqsGhFJNTv68lsDGyQdK+U9DwLVitcj1+wGq7LeOBgUzZd2puZ710bHcH9NfNeGWe2sbw7pdvAqDw==}
+    engines: {node: '>=20.10.0'}
+    hasBin: true
 
   es-define-property@1.0.1:
     resolution: {integrity: sha512-e3nRfgfUZ4rNGL232gUgX06QNyyez04KdjFrF+LTRoOXmrOgFKDg4BCdsjW8EnT69eqdYGmRpJwiPVYNrCaW3g==}
@@ -594,6 +608,10 @@ packages:
 
 snapshots:
 
+  '@commander-js/extra-typings@13.1.0(commander@13.1.0)':
+    dependencies:
+      commander: 13.1.0
+
   '@fastify/ajv-compiler@4.0.5':
     dependencies:
       ajv: 8.20.0
@@ -763,6 +781,12 @@ snapshots:
   ee-first@1.1.1: {}
 
   encodeurl@2.0.0: {}
+
+  env-cmd@11.0.0:
+    dependencies:
+      '@commander-js/extra-typings': 13.1.0(commander@13.1.0)
+      commander: 13.1.0
+      cross-spawn: 7.0.6
 
   es-define-property@1.0.1: {}
 

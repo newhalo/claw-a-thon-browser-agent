@@ -9,8 +9,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node --env-file .env server.js",
+    "dev": "node --env-file .env --watch server.js"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.12",

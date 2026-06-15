@@ -1153,7 +1153,7 @@ export default defineBackground({
 
     const requestNativeServer = async (path: string, options: RequestInit = {}) => {
       const { nativeServerUrl, authToken } = await getSavedConfig();
-      if (!nativeServerUrl) throw new Error('Native server URL is empty');
+      if (!nativeServerUrl) { const e = new Error('Native server chưa được cấu hình. Mở sidepanel để kết nối agent-service.'); (e as any).notConfigured = true; throw e; }
       const headers = new Headers(options.headers || {});
       if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
       if (!headers.has('Content-Type') && options.body) headers.set('Content-Type', 'application/json');
@@ -1220,8 +1220,13 @@ export default defineBackground({
       while (isProviderRunning) {
         try { await pollOnce(); }
         catch (err) {
-          console.error('[provider] poll failed:', err instanceof Error ? err.message : err);
-          isProviderRunning = false; break;
+          isProviderRunning = false;
+          if ((err as any)?.notConfigured) {
+            console.debug('[provider] native-server config lost, will retry on next SAVE_CONFIG');
+          } else {
+            console.error('[provider] poll failed:', err instanceof Error ? err.message : err);
+          }
+          break;
         }
       }
     };
@@ -1238,7 +1243,11 @@ export default defineBackground({
         void pollLoop();
       } catch (err) {
         isProviderRunning = false;
-        console.error('[provider] registration failed:', err instanceof Error ? err.message : err);
+        if ((err as any)?.notConfigured) {
+          console.debug('[provider] waiting for native-server config from agent-service…');
+        } else {
+          console.error('[provider] registration failed:', err instanceof Error ? err.message : err);
+        }
       }
     };
 
@@ -1287,7 +1296,7 @@ export default defineBackground({
       const persisted = await loadPersistedSessionId();
       if (persisted) return persisted;
       const { nativeServerUrl, authToken } = await getSavedConfig();
-      if (!nativeServerUrl) throw new Error('Native server URL is empty');
+      if (!nativeServerUrl) { const e = new Error('Native server chưa được cấu hình. Mở sidepanel để kết nối agent-service.'); (e as any).notConfigured = true; throw e; }
       const headers = new Headers({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'x-mcp-client-id': MCP_CLIENT_ID });
       if (authToken) headers.set('Authorization', `Bearer ${authToken}`);
       const res = await fetch(`${nativeServerUrl}/mcp`, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: mcpRequestId++, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'claw-a-thon-chrome-extension', version: '1.0.0' } } }) });

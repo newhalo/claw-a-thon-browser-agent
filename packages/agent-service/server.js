@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { listTools, resetSession, setMcpConfig, getMcpConfig, setExternalMcpServers, getExternalMcpServers } from './mcp/client.js';
-import { setProviderConfig, getProviderStatus } from './providers/index.js';
+import { setProviderConfig, getProviderStatus, getProviderCfg } from './providers/index.js';
 import { setCustomSystemPrompt, getCustomSystemPrompt } from './config.js';
 import chatRoute, { screenshotStore } from './routes/chat.js';
 import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats, setMemoryConfig, getMemoryConfig, deduplicateMemories } from './memory/long-term.js';
@@ -8,6 +8,8 @@ import { PREDEFINED_MODELS } from './models.js';
 import { getSkillsPublic } from './skills/registry.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
+const HOST = process.env.HOST || 'localhost';
+const AGENT_TOKEN = process.env.AGENT_TOKEN || '';
 
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'chrome-extension://,http://localhost')
   .split(',').map(o => o.trim());
@@ -43,10 +45,22 @@ const server = http.createServer(async (req, res) => {
       status: 'ok',
       service: 'agent-service',
       port: PORT,
+      authRequired: !!AGENT_TOKEN,
       provider: providerStatus,
       mcp: getMcpConfig().url,
     }));
     return;
+  }
+
+  // ── Auth middleware (all routes below require valid token if AGENT_TOKEN set) ─
+  if (AGENT_TOKEN) {
+    const authHeader = req.headers['authorization'] || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    if (token !== AGENT_TOKEN) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'unauthorized', message: 'Invalid or missing agent token' }));
+      return;
+    }
   }
 
   // ── Tools list ───────────────────────────────────────────────────────────
@@ -70,7 +84,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Native-server config (pushed from extension) ─────────────────────────
+  // ── Native-server config — GET returns config for extension, POST accepts override ─
+  if (url.pathname === '/native-config' && req.method === 'GET') {
+    const mcpCfg = getMcpConfig();
+    // Strip /mcp suffix and normalize 0.0.0.0 → localhost (bind addr not routable by clients)
+    const nativeServerUrl = mcpCfg.url
+      ? mcpCfg.url.replace(/\/mcp$/, '').replace('//0.0.0.0:', '//localhost:')
+      : null;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ url: nativeServerUrl, token: mcpCfg.token }));
+    return;
+  }
+
   if (url.pathname === '/native-config' && req.method === 'POST') {
     try {
       const { nativeServerUrl, authToken } = await readBody(req);
@@ -222,6 +247,61 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── List models (proxy to avoid CORS; no body = use configured provider) ────
+  if (url.pathname === '/list-models' && req.method === 'POST') {
+    try {
+      const body = await readBody(req);
+      const cfg = getProviderCfg();
+      // Resolve baseUrl and apiKey: body overrides server config
+      let resolvedBaseUrl = (body.baseUrl || '').trim() || cfg.baseUrl || '';
+      let resolvedKey = (body.apiKey || '').trim() || cfg.apiKey || '';
+      const resolvedProvider = body.provider || cfg.provider || 'openai-compat';
+
+      // Provide default baseUrls for known providers when none supplied
+      if (!resolvedBaseUrl) {
+        if (resolvedProvider === 'openai') resolvedBaseUrl = 'https://api.openai.com/v1';
+        else if (resolvedProvider === 'anthropic') resolvedBaseUrl = 'https://api.anthropic.com/v1';
+      }
+
+      if (!resolvedBaseUrl && resolvedProvider !== 'anthropic' && resolvedProvider !== 'openai') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'baseUrl required — no provider configured on server' }));
+        return;
+      }
+      if (!resolvedKey) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'apiKey required — no API key configured on server' }));
+        return;
+      }
+
+      let modelsUrl, fetchHeaders;
+      if (resolvedProvider === 'anthropic') {
+        modelsUrl = 'https://api.anthropic.com/v1/models';
+        fetchHeaders = { 'x-api-key': resolvedKey, 'anthropic-version': '2023-06-01' };
+      } else {
+        // vngcloud, gemini, openai, openai-compat — all use OpenAI-compatible /models endpoint
+        modelsUrl = `${resolvedBaseUrl.replace(/\/+$/, '')}/models`;
+        fetchHeaders = { 'Authorization': `Bearer ${resolvedKey}` };
+      }
+
+      const upstream = await fetch(modelsUrl, { headers: fetchHeaders, signal: AbortSignal.timeout(8000) });
+      if (!upstream.ok) {
+        const text = await upstream.text().catch(() => '');
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Provider returned ${upstream.status}: ${text.slice(0, 200)}` }));
+        return;
+      }
+      const data = await upstream.json();
+      const list = Array.isArray(data) ? data : (data.data ?? data.models ?? []);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ models: list.map(m => ({ id: m.id, name: m.display_name || m.id })) }));
+    } catch (err) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   // ── Models catalog ───────────────────────────────────────────────────────
   if (url.pathname === '/models' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -236,12 +316,25 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── LLM Provider config (pushed from extension setup UI) ─────────────────
+  // ── LLM Provider config GET — return current config (no apiKey) ─────────
+  if (url.pathname === '/provider-config' && req.method === 'GET') {
+    const cfg = getProviderCfg();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ provider: cfg.provider, model: cfg.model, baseUrl: cfg.baseUrl, toolsSupported: cfg.toolsSupported, visionSupported: cfg.visionSupported }));
+    return;
+  }
+
+  // ── LLM Provider config POST — update from extension setup UI ────────────
   if (url.pathname === '/provider-config' && req.method === 'POST') {
     try {
       const { provider, apiKey, model, baseUrl, toolsSupported, visionSupported, embeddingModel } = await readBody(req);
-      if (!provider || !apiKey) { res.writeHead(400).end('provider and apiKey required'); return; }
-      setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported, embeddingModel });
+      if (!provider) { res.writeHead(400).end('provider required'); return; }
+      const cfg = getProviderCfg();
+      // Fall back to env-configured values so extension can omit what it doesn't know
+      const effectiveApiKey = apiKey || cfg.apiKey;
+      const effectiveBaseUrl = baseUrl || cfg.baseUrl;
+      if (!effectiveApiKey) { res.writeHead(400).end('apiKey required — server has no env API key configured'); return; }
+      setProviderConfig({ provider, apiKey: effectiveApiKey, model, baseUrl: effectiveBaseUrl, toolsSupported, visionSupported, embeddingModel });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, status: getProviderStatus() }));
     } catch { res.writeHead(400).end('Invalid JSON'); }
@@ -371,9 +464,9 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404).end('Not Found');
 });
 
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, HOST, () => {
   const ps = getProviderStatus();
-  console.log(`[agent-service] Running on http://0.0.0.0:${PORT}`);
+  console.log(`[agent-service] Running on http://${HOST}:${PORT}`);
   console.log(`[agent-service] Provider: ${ps.configured ? `${ps.provider} (${ps.model || 'default'})` : 'NOT CONFIGURED — use setup UI'}`);
   console.log(`[agent-service] MCP server: ${getMcpConfig().url}`);
 });

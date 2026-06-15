@@ -7,27 +7,18 @@ import { useTheme, type Theme } from './lib/ThemeContext';
 import {
   getAgentServiceConfig,
   checkAgentServiceHealthFull,
-  pushNativeConfigToAgentService,
-  pushProviderConfig,
+  setAgentToken,
+  fetchNativeConfig,
+  fetchProviderConfig,
   pushSystemPrompt,
+  type HealthStatus,
 } from './lib/agentServiceClient';
 import './App.css';
 
 const IS_DEV = import.meta.env.VITE_APP_ENV === 'development';
 
-interface NativeConfig {
-  nativeServerUrl?: string;
-  authToken?: string;
-}
-
-interface ProviderConfig {
-  provider?: string;
-  apiKey?: string;
-  model?: string;
-  baseUrl?: string;
-  toolsSupported?: boolean;
-  visionSupported?: boolean;
-}
+// Setup mode: 'connection' = enter URL+token, 'provider' = configure provider, null = chat
+type SetupMode = 'connection' | 'provider' | null;
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -55,47 +46,83 @@ function ThemeToggle() {
 }
 
 function App() {
-  const [showSetup, setShowSetup] = useState(false);
+  const [setupMode, setSetupMode] = useState<SetupMode>(null);
   const [agentUrl, setAgentUrl] = useState('');
-  const [nativeCfg, setNativeCfg] = useState<NativeConfig>({});
+  const [health, setHealth] = useState<HealthStatus | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => { initApp(); }, []);
 
   async function initApp() {
-    const { url } = await getAgentServiceConfig();
-    setAgentUrl(url);
+    const cfg = await getAgentServiceConfig();
+    setAgentUrl(cfg.url);
 
-    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async (response) => {
-      const cfg: NativeConfig = response?.config || {};
-      setNativeCfg(cfg);
+    // Initialize module-level auth token for all API calls
+    setAgentToken(cfg.token);
 
-      const health = await checkAgentServiceHealthFull(url);
-      if (health) {
-        await pushNativeConfigToAgentService(url, cfg.nativeServerUrl!, cfg.authToken!);
-        chrome.storage.sync.get(['agentCustomSystemPrompt'], (r) => {
-          if (r.agentCustomSystemPrompt) pushSystemPrompt(url, r.agentCustomSystemPrompt);
-        });
-        if (!health.provider?.configured) {
-          const restored = await tryRestoreProviderConfig(url);
-          if (!restored) { setShowSetup(true); setReady(true); return; }
-        }
-      }
+    const h = await checkAgentServiceHealthFull(cfg.url);
+    setHealth(h);
 
-      setShowSetup(false);
+    if (!h) {
+      // Agent-service unreachable — show connection setup
+      setSetupMode('connection');
       setReady(true);
-    });
-  }
+      return;
+    }
 
-  async function tryRestoreProviderConfig(url: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      chrome.storage.sync.get(['agentProviderConfig'], async (result) => {
-        const saved: ProviderConfig = result.agentProviderConfig;
-        if (!saved?.provider || !saved?.apiKey) { resolve(false); return; }
-        const ok = await pushProviderConfig(url, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported);
-        resolve(ok);
+    // Service reachable — check if auth is valid
+    if (h.authRequired && !cfg.token) {
+      // Server requires auth but no token saved → connection setup
+      setSetupMode('connection');
+      setReady(true);
+      return;
+    }
+
+    // Fetch native-server config from auth-protected endpoint, notify background to update
+    fetchNativeConfig(cfg.url).then(nativeCfg => {
+      if (nativeCfg?.url) {
+        chrome.runtime.sendMessage({
+          type: 'SAVE_CONFIG',
+          config: { nativeServerUrl: nativeCfg.url, authToken: nativeCfg.token || '' }
+        });
+      }
+    });
+
+    // Seed agentProviderConfig.baseUrl from server env if not yet saved locally (covers VNGCLOUD env-only setup)
+    fetchProviderConfig(cfg.url).then(serverCfg => {
+      if (!serverCfg) return;
+      chrome.storage.sync.get(['agentProviderConfig'], r => {
+        const saved = r.agentProviderConfig ?? {};
+        if (!saved.baseUrl && serverCfg.baseUrl) {
+          chrome.storage.sync.set({ agentProviderConfig: { ...saved, baseUrl: serverCfg.baseUrl, provider: serverCfg.provider ?? saved.provider } });
+        }
       });
     });
+
+    // Push custom system prompt if saved
+    chrome.storage.sync.get(['agentCustomSystemPrompt'], (r) => {
+      if (r.agentCustomSystemPrompt) pushSystemPrompt(cfg.url, r.agentCustomSystemPrompt);
+    });
+
+    if (!h.provider?.configured) {
+      // Provider not configured on server → show provider setup
+      setSetupMode('provider');
+    } else {
+      setSetupMode(null);
+    }
+    setReady(true);
+  }
+
+  async function handleConnectionDone(newUrl: string, newToken: string, newHealth: HealthStatus) {
+    setAgentUrl(newUrl);
+    setAgentToken(newToken);
+    setHealth(newHealth);
+
+    if (!newHealth.provider?.configured) {
+      setSetupMode('provider');
+    } else {
+      setSetupMode(null);
+    }
   }
 
   if (!ready) {
@@ -129,12 +156,13 @@ function App() {
       </header>
 
       <main className="app-content">
-        {showSetup ? (
+        {setupMode ? (
           <SetupView
+            mode={setupMode}
             agentServiceUrl={agentUrl}
-            nativeServerUrl={nativeCfg.nativeServerUrl || ''}
-            nativeAuthToken={nativeCfg.authToken || ''}
-            onDone={() => setShowSetup(false)}
+            health={health}
+            onConnectionDone={handleConnectionDone}
+            onProviderDone={() => setSetupMode(null)}
           />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>

@@ -8,27 +8,25 @@ import {
   Bot,
 } from 'lucide-react';
 import ToolsPopover from '../components/ToolsPopover';
-import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService, fetchModels, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
+import { getAgentServiceConfig, checkAgentServiceHealth, setAgentToken, pushProviderConfig, listModelsForConfiguredProvider, fetchProviderConfig, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, DEFAULT_AGENT_SERVICE_URL, type Skill, type CustomSkill } from '../lib/agentServiceClient';
 import { useChatStore, type ChatMessage, type ToolInvocation, type MessageSegment, type ChatSession, sessionTitle, loadSessionsFromStorage, saveSessionsToStorage, upsertSession } from '../lib/chatStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Re-push saved provider + native config to agent-service after a restart */
+/** Re-push saved provider config to agent-service after a restart */
 async function repushProviderConfig(agentServiceUrl: string): Promise<boolean> {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['agentProviderConfig', 'agentNativeConfig'], async (result) => {
+    chrome.storage.sync.get(['agentProviderConfig'], async (result) => {
       try {
-        // Re-push native config
-        chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async (response) => {
-          const cfg = response?.config;
-          if (cfg?.nativeServerUrl) {
-            await pushNativeConfigToAgentService(agentServiceUrl, cfg.nativeServerUrl, cfg.authToken);
-          }
-        });
-        // Re-push provider config
         const saved = result.agentProviderConfig;
         if (!saved?.provider || !saved?.apiKey) { resolve(false); return; }
-        const ok = await pushProviderConfig(agentServiceUrl, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported, saved.embeddingModel);
+        // Normalize legacy 'openai-compat' saved before 'vngcloud' provider type existed
+        let provider = saved.provider;
+        if (provider === 'openai-compat' && typeof saved.baseUrl === 'string' && saved.baseUrl.includes('vngcloud')) {
+          provider = 'vngcloud';
+          chrome.storage.sync.set({ agentProviderConfig: { ...saved, provider } });
+        }
+        const ok = await pushProviderConfig(agentServiceUrl, provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported, saved.embeddingModel);
         resolve(ok);
       } catch {
         resolve(false);
@@ -442,9 +440,9 @@ interface Props { onOpenSettings: () => void }
 export default function ChatView({ onOpenSettings }: Props) {
   const { messages, conversationId, currentSessionId, isLoading, streamError, activeSkills, addMessage, updateLastAssistant, setLoading, setError, newSession, loadSession, toggleSkill } = useChatStore();
   const [input, setInput] = useState('');
-  const [serviceUrl, setServiceUrl] = useState('http://localhost:3000');
+  const [serviceUrl, setServiceUrl] = useState(DEFAULT_AGENT_SERVICE_URL);
   const [online, setOnline] = useState<boolean | null>(null);
-  const [models, setModels] = useState<PredefinedModel[]>([]);
+  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
   const [activeModelId, setActiveModelId] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
   const [disabledSkillIds, setDisabledSkillIds] = useState<string[]>([]);
@@ -463,15 +461,20 @@ export default function ChatView({ onOpenSettings }: Props) {
   useEffect(() => {
     getAgentServiceConfig().then(cfg => {
       setServiceUrl(cfg.url);
+      setAgentToken(cfg.token); // ensure module-level cache is fresh
       checkAgentServiceHealth(cfg.url).then(ok => setOnline(ok));
-      fetchModels(cfg.url).then(list => {
+      Promise.all([
+        listModelsForConfiguredProvider(cfg.url),
+        fetchProviderConfig(cfg.url),
+      ]).then(([list, serverCfg]) => {
         setModels(list);
         chrome.storage.sync.get(['agentProviderConfig'], result => {
           const saved = result.agentProviderConfig;
           const savedId = saved?.modelId || saved?.model;
-          const match = list.find(m => m.id === savedId);
-          const def = list.find(m => m.default) ?? list[0];
-          setActiveModelId(match?.id ?? def?.id ?? '');
+          // Priority: saved local match → server env default → first in list
+          const match = list.find(m => m.id === savedId)
+            ?? list.find(m => m.id === serverCfg?.model);
+          setActiveModelId(match?.id ?? list[0]?.id ?? serverCfg?.model ?? '');
         });
       });
       fetchSkills(cfg.url).then(setSkills);
@@ -484,10 +487,15 @@ export default function ChatView({ onOpenSettings }: Props) {
 
     // Sync skill settings changed from options page
     const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>) => {
-      if (changes.disabledSkills)          setDisabledSkillIds(changes.disabledSkills.newValue ?? []);
-      if (changes.customSkills)            setCustomSkills(changes.customSkills.newValue ?? []);
-      if (changes.customMcpServers)        doPushMcp();
+      if (changes.disabledSkills)           setDisabledSkillIds(changes.disabledSkills.newValue ?? []);
+      if (changes.customSkills)             setCustomSkills(changes.customSkills.newValue ?? []);
+      if (changes.customMcpServers)         doPushMcp();
       if (changes.disabledExternalMcpTools) setDisabledExternalTools(changes.disabledExternalMcpTools.newValue ?? []);
+      if (changes.agentProviderConfig) {
+        const cfg = changes.agentProviderConfig.newValue;
+        const newId = cfg?.modelId || cfg?.model;
+        if (newId) setActiveModelId(newId);
+      }
     };
     chrome.storage.sync.onChanged.addListener(onStorageChanged);
 
@@ -551,9 +559,10 @@ export default function ChatView({ onOpenSettings }: Props) {
     try {
       const chatBody = { messages: historyForRequest, conversationId, activeSkills, customSkills: customSkills.filter(s => activeSkills.includes(s.id)), ...(disabledExternalTools.length ? { disabledTools: disabledExternalTools } : {}) };
 
+      const { getAuthHeaders } = await import('../lib/agentServiceClient');
       let res = await fetch(`${serviceUrl}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(chatBody),
         signal: abortRef.current.signal,
       });
@@ -566,7 +575,7 @@ export default function ChatView({ onOpenSettings }: Props) {
           if (repushed) {
             res = await fetch(`${serviceUrl}/chat`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
               body: JSON.stringify(chatBody),
               signal: abortRef.current?.signal,
             });
@@ -698,19 +707,15 @@ export default function ChatView({ onOpenSettings }: Props) {
   }, [messages, isLoading, serviceUrl, conversationId]);
 
   const switchModel = useCallback((modelId: string) => {
-    const model = models.find(m => m.id === modelId);
-    if (!model) return;
     chrome.storage.sync.get(['agentProviderConfig'], async result => {
-      const saved = result.agentProviderConfig;
-      const apiKey = saved?.apiKey || '';
-      if (!apiKey) return;
-      const ok = await pushProviderConfig(serviceUrl, model.provider, apiKey, model.id, model.baseUrl, model.toolsSupported, model.visionSupported);
+      const saved = result.agentProviderConfig ?? {};
+      const ok = await pushProviderConfig(serviceUrl, saved.provider || 'openai-compat', saved.apiKey || '', modelId, saved.baseUrl || undefined, saved.toolsSupported ?? false, saved.visionSupported ?? false, saved.embeddingModel);
       if (ok) {
-        setActiveModelId(model.id);
-        chrome.storage.sync.set({ agentProviderConfig: { ...saved, modelId: model.id, provider: model.provider, model: model.id, baseUrl: model.baseUrl ?? '', toolsSupported: model.toolsSupported, visionSupported: model.visionSupported } });
+        setActiveModelId(modelId);
+        chrome.storage.sync.set({ agentProviderConfig: { ...saved, modelId, model: modelId } });
       }
     });
-  }, [models, serviceUrl]);
+  }, [serviceUrl]);
 
   const handleNewChat = useCallback(() => {
     // Save current session before clearing (if it has messages)
@@ -873,16 +878,10 @@ export default function ChatView({ onOpenSettings }: Props) {
                 borderRadius: 6, padding: '3px 6px',
                 fontSize: 12, color: 'var(--text-secondary)',
                 fontFamily: 'inherit', cursor: 'pointer', outline: 'none',
-                maxWidth: 140,
+                maxWidth: 160,
               }}
             >
-              {Array.from(new Set(models.map(m => m.category))).map(cat => (
-                <optgroup key={cat} label={cat}>
-                  {models.filter(m => m.category === cat).map(m => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </optgroup>
-              ))}
+              {models.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
             </select>
           )}
         </div>

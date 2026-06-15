@@ -1,22 +1,37 @@
 export interface AgentServiceConfig {
   url: string;
+  token: string;
 }
 
 export const DEFAULT_AGENT_SERVICE_URL =
   (import.meta as { env?: { VITE_DEFAULT_AGENT_URL?: string } }).env?.VITE_DEFAULT_AGENT_URL ||
   'http://localhost:3000';
 
+// Module-level token cache — set via initAgentAuth() on app startup
+let _agentToken = '';
+export function setAgentToken(token: string) { _agentToken = token; }
+export function getAuthHeaders(): Record<string, string> {
+  return _agentToken ? { 'Authorization': `Bearer ${_agentToken}` } : {};
+}
+
 export async function getAgentServiceConfig(): Promise<AgentServiceConfig> {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['agentServiceUrl'], (result) => {
-      resolve({ url: result.agentServiceUrl || DEFAULT_AGENT_SERVICE_URL });
+    chrome.storage.sync.get(['agentServiceUrl', 'agentToken'], (result) => {
+      const token = result.agentToken || '';
+      // Always keep module-level cache in sync so getAuthHeaders() works in any page context
+      setAgentToken(token);
+      const raw = result.agentServiceUrl || DEFAULT_AGENT_SERVICE_URL;
+      resolve({ url: raw.replace(/\/+$/, ''), token });
     });
   });
 }
 
 export async function saveAgentServiceConfig(config: AgentServiceConfig): Promise<void> {
   return new Promise((resolve) => {
-    chrome.storage.sync.set({ agentServiceUrl: config.url }, resolve);
+    chrome.storage.sync.set({
+      agentServiceUrl: config.url.replace(/\/+$/, ''),
+      agentToken: config.token || '',
+    }, resolve);
   });
 }
 
@@ -35,6 +50,7 @@ export async function checkAgentServiceHealth(url: string): Promise<boolean> {
  */
 export interface HealthStatus {
   status: string;
+  authRequired?: boolean;
   provider?: { configured: boolean; provider?: string | null; model?: string | null; toolsSupported?: boolean | null };
   mcp?: string;
 }
@@ -214,7 +230,7 @@ export function saveDisabledSkills(ids: string[]): Promise<void> {
 
 export async function fetchSkills(agentServiceUrl: string): Promise<Skill[]> {
   try {
-    const res = await fetch(`${agentServiceUrl}/skills`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${agentServiceUrl}/skills`, { headers: getAuthHeaders(), signal: AbortSignal.timeout(3000) });
     if (!res.ok) return [];
     return res.json();
   } catch {
@@ -224,12 +240,16 @@ export async function fetchSkills(agentServiceUrl: string): Promise<Skill[]> {
 
 export async function fetchModels(agentServiceUrl: string): Promise<PredefinedModel[]> {
   try {
-    const res = await fetch(`${agentServiceUrl}/models`, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) return [];
-    return res.json();
+    const res = await fetch(`${agentServiceUrl}/models`, { headers: getAuthHeaders(), signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const list: PredefinedModel[] = await res.json();
+      if (list.length > 0) return list;
+    }
   } catch {
-    return [];
+    // fall through to bundled list
   }
+  const { BUNDLED_MODELS } = await import('./models');
+  return BUNDLED_MODELS;
 }
 
 export async function pushProviderConfig(
@@ -245,7 +265,7 @@ export async function pushProviderConfig(
   try {
     const res = await fetch(`${agentServiceUrl}/provider-config`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported, embeddingModel }),
       signal: AbortSignal.timeout(5000),
     });
@@ -259,7 +279,7 @@ export async function pushSystemPrompt(agentServiceUrl: string, systemPrompt: st
   try {
     const res = await fetch(`${agentServiceUrl}/system-prompt`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ systemPrompt }),
       signal: AbortSignal.timeout(3000),
     });
@@ -339,7 +359,7 @@ export async function testMcpServer(agentServiceUrl: string, mcpUrl: string, hea
   try {
     const res = await fetch(`${agentServiceUrl}/test-mcp`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ url: mcpUrl, headers }),
       signal: AbortSignal.timeout(8000),
     });
@@ -358,7 +378,7 @@ export async function pushExternalMcpServers(agentServiceUrl: string, servers: C
     }));
     const res = await fetch(`${agentServiceUrl}/external-mcp-config`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ servers: payload }),
       signal: AbortSignal.timeout(5000),
     });
@@ -378,7 +398,7 @@ export async function detectProviderCapabilities(
   try {
     const res = await fetch(`${agentServiceUrl}/detect-capabilities`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ provider, apiKey, modelId, baseUrl }),
       signal: AbortSignal.timeout(30000),
     });
@@ -390,7 +410,7 @@ export async function detectProviderCapabilities(
 
 export async function getMemoryConfig(agentServiceUrl: string): Promise<{ maxEntries: number } | null> {
   try {
-    const res = await fetch(`${agentServiceUrl}/memory-config`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${agentServiceUrl}/memory-config`, { headers: getAuthHeaders(), signal: AbortSignal.timeout(3000) });
     if (!res.ok) return null;
     return res.json();
   } catch { return null; }
@@ -400,12 +420,84 @@ export async function pushMemoryConfig(agentServiceUrl: string, maxEntries: numb
   try {
     const res = await fetch(`${agentServiceUrl}/memory-config`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ maxEntries }),
       signal: AbortSignal.timeout(3000),
     });
     return res.ok;
   } catch { return false; }
+}
+
+export async function fetchNativeConfig(agentServiceUrl: string): Promise<{ url: string | null; token: string } | null> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/native-config`, { headers: getAuthHeaders(), signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
+
+export async function listModelsFromProvider(
+  agentServiceUrl: string,
+  baseUrl: string,
+  apiKey?: string,
+  provider?: string,
+): Promise<{ id: string; name: string }[]> {
+  const res = await fetch(`${agentServiceUrl}/list-models`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ baseUrl, apiKey, provider }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `HTTP ${res.status}`);
+  }
+  const data = await res.json();
+  return data.models ?? [];
+}
+
+/** Fetch current provider config from server (no apiKey returned). */
+export async function fetchProviderConfig(agentServiceUrl: string): Promise<{ provider: string | null; model: string | null; baseUrl: string | null; toolsSupported: boolean | null; visionSupported: boolean | null } | null> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/provider-config`, { headers: getAuthHeaders(), signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
+
+/** Fetch models using the server's currently configured provider (no input needed). */
+export async function listModelsForConfiguredProvider(
+  agentServiceUrl: string,
+): Promise<{ id: string; name: string }[]> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/list-models`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.models ?? [];
+  } catch { return []; }
+}
+
+/** Switch only the active model, preserving all other provider settings. */
+export async function switchActiveModel(agentServiceUrl: string, modelId: string): Promise<boolean> {
+  return new Promise(resolve => {
+    chrome.storage.sync.get(['agentProviderConfig'], async result => {
+      const saved = result.agentProviderConfig ?? {};
+      const provider = saved.provider || 'openai-compat';
+      const apiKey = saved.apiKey || '';
+      const baseUrl = saved.baseUrl || '';
+      const tools = saved.toolsSupported ?? false;
+      const vision = saved.visionSupported ?? false;
+      const embModel = saved.embeddingModel;
+      const ok = await pushProviderConfig(agentServiceUrl, provider, apiKey, modelId, baseUrl, tools, vision, embModel);
+      if (ok) chrome.storage.sync.set({ agentProviderConfig: { ...saved, modelId, model: modelId } });
+      resolve(ok);
+    });
+  });
 }
 
 export async function pushNativeConfigToAgentService(
@@ -416,7 +508,7 @@ export async function pushNativeConfigToAgentService(
   try {
     const res = await fetch(`${agentServiceUrl}/native-config`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
       body: JSON.stringify({ nativeServerUrl, authToken }),
       signal: AbortSignal.timeout(3000),
     });
