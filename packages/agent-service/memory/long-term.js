@@ -217,6 +217,54 @@ export function searchMemories(query, queryEmbedding = null, topK = 5) {
   }
 }
 
+/**
+ * Deduplicate existing memories by cosine similarity.
+ * For each pair with similarity >= threshold, keep the most important/newest,
+ * merge content, delete the other.
+ * Returns { merged, deleted } counts.
+ */
+export function deduplicateMemories(threshold = 0.82) {
+  const d = getDb();
+  const rows = d.prepare(
+    'SELECT id, content, embedding, importance, updated_at FROM memories WHERE embedding IS NOT NULL ORDER BY importance DESC, updated_at DESC'
+  ).all();
+
+  const deleted = new Set();
+  let mergedCount = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    if (deleted.has(rows[i].id)) continue;
+    let embA;
+    try { embA = JSON.parse(rows[i].embedding); } catch { continue; }
+
+    for (let j = i + 1; j < rows.length; j++) {
+      if (deleted.has(rows[j].id)) continue;
+      let embB;
+      try { embB = JSON.parse(rows[j].embedding); } catch { continue; }
+
+      if (cosineSimilarity(embA, embB) >= threshold) {
+        // Merge: keep rows[i] (higher importance/newer), append unique content from rows[j]
+        const merged = rows[i].content === rows[j].content
+          ? rows[i].content
+          : `${rows[i].content}\n${rows[j].content}`.slice(0, 1000);
+        const newImportance = Math.min(1.0, Math.max(rows[i].importance, rows[j].importance) + 0.05);
+        d.prepare('UPDATE memories SET content = ?, importance = ?, updated_at = ? WHERE id = ?')
+          .run(merged, newImportance, Date.now(), rows[i].id);
+        d.prepare('DELETE FROM memories WHERE id = ?').run(rows[j].id);
+        deleted.add(rows[j].id);
+        rows[i] = { ...rows[i], content: merged, importance: newImportance };
+        mergedCount++;
+      }
+    }
+  }
+
+  if (deleted.size > 0) {
+    d.prepare("INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')").run();
+  }
+  console.log(`[memory] Deduplicate: merged ${mergedCount}, deleted ${deleted.size}`);
+  return { merged: mergedCount, deleted: deleted.size };
+}
+
 export function getRecentMemories(limit = 20) {
   return getDb().prepare(
     'SELECT id, conversation_id, content, importance, created_at, updated_at FROM memories ORDER BY updated_at DESC LIMIT ?'

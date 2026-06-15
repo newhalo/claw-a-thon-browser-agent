@@ -3,7 +3,7 @@ import { listTools, resetSession, setMcpConfig, getMcpConfig, setExternalMcpServ
 import { setProviderConfig, getProviderStatus } from './providers/index.js';
 import { setCustomSystemPrompt, getCustomSystemPrompt } from './config.js';
 import chatRoute, { screenshotStore } from './routes/chat.js';
-import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats, setMemoryConfig, getMemoryConfig } from './memory/long-term.js';
+import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats, setMemoryConfig, getMemoryConfig, deduplicateMemories } from './memory/long-term.js';
 import { PREDEFINED_MODELS } from './models.js';
 import { getSkillsPublic } from './skills/registry.js';
 
@@ -293,6 +293,20 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, config: getMemoryConfig() }));
     } catch { res.writeHead(400).end('Invalid JSON'); }
+    return;
+  }
+
+  if (url.pathname === '/memories/deduplicate' && req.method === 'POST') {
+    try {
+      const body = req.headers['content-length'] > 0 ? await readBody(req).catch(() => ({})) : {};
+      const threshold = body.threshold ?? 0.82;
+      const result = deduplicateMemories(threshold);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, ...result }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 

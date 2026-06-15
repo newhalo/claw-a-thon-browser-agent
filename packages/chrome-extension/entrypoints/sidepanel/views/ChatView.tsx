@@ -181,7 +181,7 @@ function AssistantMessage({ msg, serviceUrl }: { msg: ChatMessage; serviceUrl: s
         seg.type === 'text' ? (
           !seg.content ? null : (
             <div key={i} className="md" style={{ lineHeight: 1.6, color: 'var(--text-primary)' }}>
-              <ReactMarkdown>{seg.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{seg.content}</ReactMarkdown>
             </div>
           )
         ) : (

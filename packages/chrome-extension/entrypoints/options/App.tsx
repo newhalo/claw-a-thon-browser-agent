@@ -1090,6 +1090,16 @@ function MemoryTab() {
     else setMsg({ type: 'error', text: '❌ Xóa thất bại' });
   };
 
+  const deduplicate = async () => {
+    const { url } = await getAgentServiceConfig();
+    const res = await fetch(`${url}/memories/deduplicate`, { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      setMsg({ type: 'success', text: `✅ Đã gộp ${data.merged} cặp, xóa ${data.deleted} entries trùng` });
+      void load();
+    } else setMsg({ type: 'error', text: '❌ Deduplicate thất bại' });
+  };
+
   const saveConfig = async () => {
     setSavingConfig(true);
     try {
@@ -1109,6 +1119,7 @@ function MemoryTab() {
         <SectionTitle>Long-term Memory</SectionTitle>
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={load} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }}>↻ Refresh</button>
+          <button onClick={deduplicate} disabled={memories.length < 2} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }} title="Gộp các memories có nội dung tương tự">🔀 Deduplicate</button>
           <button onClick={clearAll} disabled={memories.length === 0} style={{ ...btnStyle, fontSize: 12, padding: '6px 12px', background: '#ef4444', borderColor: '#ef4444' }}>🗑 Clear all</button>
         </div>
       </div>
