@@ -18,7 +18,7 @@ import { getModel, getEmbeddingModel, getProviderStatus, isToolsSupported, isVis
 import { getCustomSystemPrompt } from '../config.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
-import { searchMemories, consolidateConversation } from '../memory/long-term.js';
+import { searchMemories, consolidateConversation, saveMemory } from '../memory/long-term.js';
 import { getSkillById } from '../skills/registry.js';
 
 // Screenshot store — keeps base64 images out of LLM context.
@@ -84,6 +84,13 @@ Do NOT take screenshots as a general-purpose "what's on the page" check — use 
 - Confirm before destructive actions (closing tabs, clearing data, form submission)
 - When navigating to a URL the user mentioned, use it exactly as given
 - If a selector fails twice, take a screenshot to visually inspect the page, then adjust
+
+## Long-term memory
+You have a \`save_memory\` tool. Use it proactively whenever you learn something worth remembering:
+- User's name, role, company, preferences, or personal facts
+- Explicit user instructions ("always do X", "never do Y")
+- Important decisions or outcomes from this conversation
+Call it immediately when such information appears — don't wait until end of conversation.
 
 Current date: ${DATE_STR}`;
 
@@ -268,6 +275,23 @@ export default async function chatRoute(req, res) {
     : mcpTools;
 
   const tools = buildToolsFromMcp(effectiveMcpTools, enabledTools);
+
+  // Built-in save_memory tool — agent proactively saves important facts
+  tools['save_memory'] = tool({
+    description: 'Save an important piece of information to long-term memory. Call this when you learn something significant about the user (name, role, preferences, goals) or when a key decision/fact should be remembered across future conversations.',
+    parameters: z.object({
+      content: z.string().describe('The important information to remember. Be concise and specific (1–3 sentences).'),
+    }),
+    execute: async ({ content }) => {
+      try {
+        saveMemory(conversationId, content.trim(), null, 0.8);
+        console.log(`[memory] Agent saved: "${content.slice(0, 80)}"`);
+        return { saved: true };
+      } catch (err) {
+        return { saved: false, error: err.message };
+      }
+    },
+  });
 
   // Client (Zustand) already sends the full conversation history.
   // Do NOT prepend server-side history — that would duplicate messages and confuse the model.

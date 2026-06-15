@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import * as Popover from '@radix-ui/react-popover';
 import ToolsPopover from '../components/ToolsPopover';
 import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService, fetchModels, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
@@ -61,7 +62,7 @@ function parseDataStreamChunk(raw: string) {
 function Markdown({ content, isUser }: { content: string; isUser: boolean }) {
   return (
     <div className={`md ${isUser ? 'md-user' : ''}`}>
-      <ReactMarkdown>{content}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
     </div>
   );
 }
