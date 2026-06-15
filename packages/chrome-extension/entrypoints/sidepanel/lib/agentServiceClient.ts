@@ -2,7 +2,9 @@ export interface AgentServiceConfig {
   url: string;
 }
 
-export const DEFAULT_AGENT_SERVICE_URL = 'http://localhost:3000';
+export const DEFAULT_AGENT_SERVICE_URL =
+  (import.meta as { env?: { VITE_DEFAULT_AGENT_URL?: string } }).env?.VITE_DEFAULT_AGENT_URL ||
+  'http://localhost:3000';
 
 export async function getAgentServiceConfig(): Promise<AgentServiceConfig> {
   return new Promise((resolve) => {

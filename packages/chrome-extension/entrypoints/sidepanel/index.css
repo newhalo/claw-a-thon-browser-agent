@@ -1,5 +1,6 @@
-/* ── Design tokens ─────────────────────────────────────────────────────────── */
-:root {
+/* ── Design tokens — Light theme (default) ──────────────────────────────────── */
+:root,
+[data-theme="light"] {
   --bg-base:       #ffffff;
   --bg-surface:    #f8f9fa;
   --bg-elevated:   #ffffff;
@@ -28,7 +29,7 @@
   --shadow-sm:     0 1px 3px rgba(0,0,0,0.06);
   --shadow-md:     0 4px 16px rgba(0,0,0,0.08);
 
-  /* legacy aliases used by Settings / TokensPanel */
+  /* legacy aliases */
   --primary:       #4f46e5;
   --primary-hover: #4338ca;
   --bg:            #f8f9fa;
@@ -37,6 +38,81 @@
   --bg-primary:    #ffffff;
   --bg-secondary:  #f8f9fa;
   --bg-3:          #f1f3f5;
+}
+
+/* ── Dark theme ──────────────────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  --bg-base:       #0f1117;
+  --bg-surface:    #1a1d27;
+  --bg-elevated:   #1e2130;
+  --bg-hover:      #252838;
+  --bg-active:     #2d3145;
+
+  --text-primary:  #e8eaf0;
+  --text-secondary:#9499b0;
+  --text-muted:    #5c6280;
+
+  --accent:        #6366f1;
+  --accent-hover:  #818cf8;
+  --accent-light:  rgba(99,102,241,0.12);
+
+  --border:        #2a2d3e;
+  --border-focus:  #6366f1;
+
+  --success:       #34d399;
+  --error:         #f87171;
+  --warning:       #fbbf24;
+
+  --shadow-sm:     0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md:     0 4px 16px rgba(0,0,0,0.4);
+
+  /* legacy aliases */
+  --primary:       #6366f1;
+  --primary-hover: #818cf8;
+  --bg:            #1a1d27;
+  --border-color:  #2a2d3e;
+  --text:          #e8eaf0;
+  --bg-primary:    #1e2130;
+  --bg-secondary:  #1a1d27;
+  --bg-3:          #252838;
+}
+
+/* ── System preference fallback ─────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg-base:       #0f1117;
+    --bg-surface:    #1a1d27;
+    --bg-elevated:   #1e2130;
+    --bg-hover:      #252838;
+    --bg-active:     #2d3145;
+
+    --text-primary:  #e8eaf0;
+    --text-secondary:#9499b0;
+    --text-muted:    #5c6280;
+
+    --accent:        #6366f1;
+    --accent-hover:  #818cf8;
+    --accent-light:  rgba(99,102,241,0.12);
+
+    --border:        #2a2d3e;
+    --border-focus:  #6366f1;
+
+    --success:       #34d399;
+    --error:         #f87171;
+    --warning:       #fbbf24;
+
+    --shadow-sm:     0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md:     0 4px 16px rgba(0,0,0,0.4);
+
+    --primary:       #6366f1;
+    --primary-hover: #818cf8;
+    --bg:            #1a1d27;
+    --border-color:  #2a2d3e;
+    --text:          #e8eaf0;
+    --bg-primary:    #1e2130;
+    --bg-secondary:  #1a1d27;
+    --bg-3:          #252838;
+  }
 }
 
 /* ── Reset ─────────────────────────────────────────────────────────────────── */
@@ -49,6 +125,7 @@ body {
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  transition: background 0.2s, color 0.2s;
 }
 
 #app, .app { width: 100%; height: 100vh; display: flex; flex-direction: column; }
@@ -58,11 +135,17 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
+  padding: 0 12px 0 14px;
   height: 44px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.app-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .app-header h1 {
@@ -70,6 +153,30 @@ body {
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.3px;
+}
+
+.app-header-badges {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.badge-dev {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(251,191,36,0.15);
+  color: #d97706;
+  border: 1px solid rgba(251,191,36,0.35);
+  text-transform: uppercase;
+}
+
+[data-theme="dark"] .badge-dev {
+  background: rgba(251,191,36,0.1);
+  color: #fbbf24;
+  border-color: rgba(251,191,36,0.25);
 }
 
 .app-nav { display: flex; gap: 2px; }
@@ -81,7 +188,6 @@ body {
   border-radius: var(--radius-sm);
   background: transparent;
   cursor: pointer;
-  font-size: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -101,17 +207,22 @@ body {
 
 .form-group { margin-bottom: 14px; }
 .form-group label { display: block; margin-bottom: 5px; font-weight: 500; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.4px; }
-.form-group input {
+.form-group input, .form-group select, .form-group textarea {
   width: 100%; padding: 8px 12px;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   font-size: 13px; font-family: inherit; background: var(--bg-elevated);
   color: var(--text-primary); transition: border-color 0.15s;
 }
-.form-group input:focus { outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--accent-light); }
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+  outline: none; border-color: var(--border-focus); box-shadow: 0 0 0 3px var(--accent-light);
+}
 
 .message { padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 14px; font-size: 13px; }
 .message-success { background: rgba(16,185,129,0.08); color: #065f46; border: 1px solid rgba(16,185,129,0.3); }
 .message-error   { background: rgba(239,68,68,0.08);  color: #991b1b; border: 1px solid rgba(239,68,68,0.3);  }
+
+[data-theme="dark"] .message-success { color: #6ee7b7; }
+[data-theme="dark"] .message-error   { color: #fca5a5; }
 
 .button-group { display: flex; gap: 8px; margin-bottom: 20px; }
 .button-group button { flex: 1; padding: 9px 16px; border: none; border-radius: var(--radius-sm); background: var(--accent); color: white; cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.15s; }
@@ -130,16 +241,16 @@ body {
 .tokens-header h2 { font-size: 15px; font-weight: 700; }
 .tokens-description { font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; }
 
-.btn-primary { padding: 7px 14px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.15s; }
+.btn-primary { padding: 7px 14px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.15s; display: inline-flex; align-items: center; gap: 6px; }
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-secondary { padding: 7px 14px; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; transition: background 0.15s; }
+.btn-secondary { padding: 7px 14px; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; transition: background 0.15s; display: inline-flex; align-items: center; gap: 6px; }
 .btn-secondary:hover { background: var(--bg-hover); }
-.btn-danger { padding: 5px 10px; background: var(--bg-elevated); color: var(--error); border: 1px solid var(--error); border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; transition: all 0.15s; }
+.btn-danger { padding: 5px 10px; background: var(--bg-elevated); color: var(--error); border: 1px solid var(--error); border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; transition: all 0.15s; display: inline-flex; align-items: center; gap: 4px; }
 .btn-danger:hover:not(:disabled) { background: var(--error); color: white; }
 .btn-danger:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-copy { padding: 5px 12px; background: var(--success); color: white; border: none; border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; white-space: nowrap; }
-.dismiss-btn { background: none; border: none; cursor: pointer; font-size: 16px; color: var(--text-muted); padding: 0 4px; line-height: 1; }
+.dismiss-btn { background: none; border: none; cursor: pointer; color: var(--text-muted); padding: 0 4px; line-height: 1; display: flex; align-items: center; }
 
 .token-reveal { background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.3); border-radius: var(--radius-md); padding: 14px; margin-bottom: 18px; }
 .token-reveal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
@@ -147,11 +258,11 @@ body {
 .token-value-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
 .token-value { flex: 1; font-family: monospace; font-size: 11px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 8px; word-break: break-all; }
 .cursor-config-label { font-size: 12px; font-weight: 500; margin-bottom: 4px; color: var(--text-secondary); }
-.cursor-config-pre { font-family: monospace; font-size: 11px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; white-space: pre; }
+.cursor-config-pre { font-family: monospace; font-size: 11px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; white-space: pre; color: var(--text-primary); }
 .create-token-form { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 14px; margin-bottom: 18px; }
 .create-token-form h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; }
 .preset-row { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
-.preset-btn { padding: 5px 12px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg-elevated); cursor: pointer; font-size: 12px; transition: all 0.15s; }
+.preset-btn { padding: 5px 12px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg-elevated); cursor: pointer; font-size: 12px; transition: all 0.15s; color: var(--text-primary); }
 .preset-btn:hover { border-color: var(--accent); color: var(--accent); }
 .preset-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
@@ -166,6 +277,17 @@ body {
 .loading, .error, .empty-state { padding: 40px 20px; text-align: center; color: var(--text-secondary); }
 .error button, .empty-state button { margin-top: 14px; padding: 7px 14px; background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
 
+/* ── Theme toggle ────────────────────────────────────────────────────────────── */
+.theme-toggle {
+  width: 32px; height: 32px;
+  border: none; border-radius: var(--radius-sm);
+  background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s;
+}
+.theme-toggle:hover { background: var(--bg-hover); color: var(--text-primary); }
+
 /* ── Markdown in chat ──────────────────────────────────────────────────────── */
 .md { font-size: 13px; line-height: 1.6; color: inherit; }
 .md p { margin-bottom: 8px; }
@@ -175,6 +297,7 @@ body {
 .md ul,.md ol { padding-left: 18px; margin-bottom: 8px; }
 .md li { margin-bottom: 3px; }
 .md code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; background: rgba(0,0,0,0.07); padding: 1px 5px; border-radius: 4px; }
+[data-theme="dark"] .md code { background: rgba(255,255,255,0.08); }
 .md pre { background: #1e1e2e; color: #cdd6f4; border-radius: var(--radius-sm); padding: 12px 14px; overflow-x: auto; margin: 8px 0; font-size: 12px; }
 .md pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
 .md blockquote { border-left: 3px solid var(--border); padding-left: 10px; color: var(--text-secondary); margin: 8px 0; }
@@ -186,7 +309,6 @@ body {
 .md th { background: var(--bg-hover); font-weight: 600; }
 .md hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 
-/* User bubble: white text on accent bg — invert code style */
 .md-user code { background: rgba(255,255,255,0.2); }
 .md-user pre { background: rgba(0,0,0,0.2); color: #fff; }
 .md-user a { color: #c7d2fe; }

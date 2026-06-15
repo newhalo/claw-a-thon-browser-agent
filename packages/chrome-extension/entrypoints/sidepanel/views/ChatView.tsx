@@ -2,6 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as Popover from '@radix-ui/react-popover';
+import {
+  ArrowUp, Square, ArrowLeft, ChevronUp, ChevronDown, X, Plus,
+  History, Check, Loader2, CheckCircle2, Wrench, Target, AlertTriangle,
+  Bot,
+} from 'lucide-react';
 import ToolsPopover from '../components/ToolsPopover';
 import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService, fetchModels, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
 import { useChatStore, type ChatMessage, type ToolInvocation, type MessageSegment, type ChatSession, sessionTitle, loadSessionsFromStorage, saveSessionsToStorage, upsertSession } from '../lib/chatStore';
@@ -125,20 +130,17 @@ function ToolCallBlock({ inv, serviceUrl }: { inv: ToolInvocation; serviceUrl: s
           textAlign: 'left',
         }}
       >
-        <span style={{ fontSize: 13 }}>{done ? '✅' : '⚙️'}</span>
+        <span style={{ display: 'flex', alignItems: 'center', color: done ? 'var(--success)' : 'var(--accent)', flexShrink: 0 }}>
+          {done
+            ? <CheckCircle2 size={14} />
+            : <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} />}
+        </span>
         <span style={{ fontWeight: 600, color: 'var(--text-primary)', flex: 1, textTransform: 'capitalize' }}>
           {label}
         </span>
-        {!done && (
-          <span style={{
-            width: 10, height: 10, borderRadius: '50%',
-            border: '2px solid var(--accent)',
-            borderTopColor: 'transparent',
-            animation: 'spin 0.8s linear infinite',
-            display: 'inline-block',
-          }} />
-        )}
-        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{open ? '▴' : '▾'}</span>
+        <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
+          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        </span>
       </button>
 
       {open && (
@@ -242,7 +244,7 @@ function SkillsPopover({ skills, activeIds, onToggle, disabled }: {
             display: 'flex', alignItems: 'center', gap: 4,
           }}
         >
-          🎯 <span style={{ fontSize: 12 }}>Skills{activeCount > 0 ? ` · ${activeCount}` : ''}</span>
+          <Target size={14} /> <span style={{ fontSize: 12 }}>Skills{activeCount > 0 ? ` · ${activeCount}` : ''}</span>
         </button>
       </Popover.Trigger>
 
@@ -255,7 +257,7 @@ function SkillsPopover({ skills, activeIds, onToggle, disabled }: {
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Agent Skills</span>
             <Popover.Close asChild>
-              <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-secondary)' }}>×</button>
+              <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', padding: 2 }}><X size={14} /></button>
             </Popover.Close>
           </div>
           <div style={{ padding: '6px 8px' }}>
@@ -279,7 +281,7 @@ function SkillsPopover({ skills, activeIds, onToggle, disabled }: {
                     <div style={{ fontSize: 12, fontWeight: active ? 600 : 500, color: active ? 'var(--accent)' : 'var(--text-primary)' }}>{skill.name}</div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill.description}</div>
                   </div>
-                  {active && <span style={{ fontSize: 11, color: 'var(--accent)', flexShrink: 0 }}>✓</span>}
+                  {active && <Check size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
                 </button>
               );
             })}
@@ -342,7 +344,7 @@ function HistoryPanel({ sessions, currentId, onLoad, onDelete, onClose }: {
         padding: '8px 12px', borderBottom: '1px solid var(--border)',
         background: 'var(--bg-surface)',
       }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text-secondary)', padding: '0 4px', lineHeight: 1 }}>←</button>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '0 4px', display: 'flex', alignItems: 'center' }}><ArrowLeft size={16} /></button>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>Lịch sử chat</span>
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sorted.length} phiên</span>
       </div>
@@ -377,9 +379,9 @@ function HistoryPanel({ sessions, currentId, onLoad, onDelete, onClose }: {
               <button
                 onClick={e => { e.stopPropagation(); onDelete(s.id); }}
                 title="Xoá phiên"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', padding: '2px 4px', borderRadius: 4, flexShrink: 0, opacity: 0.6 }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', borderRadius: 4, flexShrink: 0, opacity: 0.6, display: 'flex', alignItems: 'center' }}
               >
-                ✕
+                <X size={13} />
               </button>
             </div>
           );
@@ -411,7 +413,7 @@ function SendButton({ input, onSend }: { input: string; onSend: () => void }) {
         transition: 'background 0.15s, color 0.15s',
       }}
     >
-      <span style={{ color: active && hovered ? 'white' : undefined, transition: 'color 0.15s' }}>↑</span>
+      <ArrowUp size={15} style={{ color: active && hovered ? 'white' : undefined, transition: 'color 0.15s' }} />
     </button>
   );
 }
@@ -791,16 +793,16 @@ export default function ChatView({ onOpenSettings }: Props) {
         <button
           onClick={() => setShowHistory(v => !v)}
           title="Lịch sử chat"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, padding: '1px 4px', borderRadius: 4 }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '1px 4px', borderRadius: 4, display: 'flex', alignItems: 'center' }}
         >
-          ⏱
+          <History size={13} />
         </button>
         <button
           onClick={handleNewChat}
           title="Chat mới"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '1px 4px', borderRadius: 4, fontWeight: 600 }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '1px 4px', borderRadius: 4, display: 'flex', alignItems: 'center' }}
         >
-          +
+          <Plus size={14} />
         </button>
       </div>
 
@@ -808,7 +810,7 @@ export default function ChatView({ onOpenSettings }: Props) {
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px 8px' }}>
         {messages.length === 0 && (
           <div style={{ textAlign: 'center', paddingTop: 48 }}>
-            <div style={{ fontSize: 36, marginBottom: 14 }}>🤖</div>
+            <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'center' }}><Bot size={40} style={{ color: 'var(--accent)', opacity: 0.7 }} /></div>
             <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8, color: 'var(--text-primary)' }}>
               Browser Agent
             </div>
@@ -831,9 +833,9 @@ export default function ChatView({ onOpenSettings }: Props) {
           <div style={{
             padding: '8px 12px', borderRadius: 8, marginBottom: 10,
             background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
-            color: 'var(--error)', fontSize: 12,
+            color: 'var(--error)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6,
           }}>
-            ⚠️ {streamError}
+            <AlertTriangle size={13} style={{ flexShrink: 0 }} /> {streamError}
           </div>
         )}
 
@@ -924,10 +926,10 @@ export default function ChatView({ onOpenSettings }: Props) {
               style={{
                 width: 30, height: 30, borderRadius: 8, border: 'none',
                 background: 'var(--error)', color: 'white',
-                cursor: 'pointer', fontSize: 12, flexShrink: 0,
+                cursor: 'pointer', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
-            >■</button>
+            ><Square size={13} fill="white" /></button>
           ) : (
             <SendButton input={input} onSend={() => sendMessage(input)} />
           )}
