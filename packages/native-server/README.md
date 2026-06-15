@@ -96,6 +96,21 @@ docker run --rm -p 8080:8080 \
   mcpb-native-server-gateway:latest
 ```
 
+## Deploy lên AgentBase
+
+Image đã có sẵn Dockerfile. Dùng script AgentBase để build và deploy.
+
+**Gotchas quan trọng:**
+
+- Cài pnpm bằng `corepack enable pnpm` thay vì `npm install -g pnpm` để đúng version theo `packageManager` field và tránh OOM.
+- Dockerfile phải copy cả `pnpm-lock.yaml` (không chỉ `package.json`) để pnpm dùng lockfile, tránh resolve lại từ đầu.
+
+**Runtime đang chạy (prod):**
+
+| Service | Runtime ID | Endpoint |
+|---------|-----------|----------|
+| native-server | `runtime-84265301-5c38-4854-89e4-c6280d62c66c` | `https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn` |
+
 ## Gợi ý hardening khi deploy public
 
 - Luôn đặt token dài và random, xoay vòng định kỳ.

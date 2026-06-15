@@ -2,7 +2,7 @@
 
 Backend service cho Chat Agent trong Chrome extension. Xử lý LLM orchestration, MCP tool routing, và short-term memory.
 
-Chạy trên port **3000** (độc lập với `native-server` port 8080).
+Chạy trên port **3000** khi local. Khi deploy lên AgentBase phải set `PORT=8080`.
 
 ## Cài đặt
 
@@ -38,7 +38,7 @@ pnpm start
 | `CUSTOM_MODEL` | Model ID cho custom provider | Nếu dùng openai-compat |
 | `MCP_SERVER_URL` | URL native-server MCP endpoint | Có |
 | `MCP_AUTH_TOKEN` | Bearer token cho native-server | Có |
-| `PORT` | Port của service (default: 3000) | Không |
+| `PORT` | Port của service. Local: `3000`. **AgentBase: phải set `8080`** | Không |
 | `CORS_ORIGINS` | Allowed origins, phân cách bởi dấu phẩy | Không |
 
 ## OpenAI-compatible providers
@@ -96,6 +96,23 @@ List các MCP tools available từ native-server.
 ### `POST /mcp/reset`
 
 Reset MCP session (dùng khi native-server restart).
+
+## Deploy lên AgentBase
+
+Image đã có sẵn Dockerfile (multi-stage, `node:20-slim`). Dùng script AgentBase để build và deploy.
+
+**Gotchas quan trọng:**
+
+- `PORT` trong `.env` phải là `8080` (AgentBase yêu cầu container listen đúng port này).
+- Server bind `0.0.0.0` (không phải `127.0.0.1`) để AgentBase health check reach được.
+- `better-sqlite3` cần prebuilt binary — dùng `node:20-slim` (Debian/glibc) thay vì Alpine để tránh OOM khi compile native module.
+- Cài pnpm bằng `corepack enable pnpm` thay vì `npm install -g pnpm` để đúng version theo `packageManager` field.
+
+**Runtime đang chạy (prod):**
+
+| Service | Runtime ID | Endpoint |
+|---------|-----------|----------|
+| agent-service | `runtime-8b6ff06c-9c1b-43e4-be39-ddc0ca5b6f8c` | `https://endpoint-a24a9556-762d-4969-9253-a4aa8019faf8.agentbase-runtime.aiplatform.vngcloud.vn` |
 
 ## Kiến trúc
 

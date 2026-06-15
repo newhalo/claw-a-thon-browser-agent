@@ -371,9 +371,9 @@ const server = http.createServer(async (req, res) => {
   res.writeHead(404).end('Not Found');
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, '0.0.0.0', () => {
   const ps = getProviderStatus();
-  console.log(`[agent-service] Running on http://127.0.0.1:${PORT}`);
+  console.log(`[agent-service] Running on http://0.0.0.0:${PORT}`);
   console.log(`[agent-service] Provider: ${ps.configured ? `${ps.provider} (${ps.model || 'default'})` : 'NOT CONFIGURED — use setup UI'}`);
   console.log(`[agent-service] MCP server: ${getMcpConfig().url}`);
 });
