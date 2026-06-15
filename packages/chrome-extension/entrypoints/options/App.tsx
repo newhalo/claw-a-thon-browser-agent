@@ -5,6 +5,7 @@ import {
   fetchModels, fetchSkills, fetchSkillFromUrl, detectProviderCapabilities,
   loadCustomSkills, saveCustomSkills, loadDisabledSkills, saveDisabledSkills,
   loadCustomMcpServers, saveCustomMcpServers, pushExternalMcpServers, parseMcpConfigJson, testMcpServer,
+  getMemoryConfig, pushMemoryConfig,
   type PredefinedModel, type Skill, type CustomSkill, type CustomMcpServer,
 } from '../sidepanel/lib/agentServiceClient';
 
@@ -1049,16 +1050,26 @@ interface MemoryEntry { id: number; conversation_id: string; content: string; im
 
 function MemoryTab() {
   const [memories, setMemories] = useState<MemoryEntry[]>([]);
-  const [stats, setStats] = useState<{ total: number; withEmbeddings: number } | null>(null);
+  const [stats, setStats] = useState<{ total: number; withEmbeddings: number; maxEntries?: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [maxEntries, setMaxEntries] = useState(200);
+  const [savingConfig, setSavingConfig] = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
       const { url } = await getAgentServiceConfig();
-      const res = await fetch(`${url}/memories?limit=50`);
-      if (res.ok) { const data = await res.json(); setMemories(data.memories ?? []); setStats(data.stats ?? null); }
+      const [memRes, cfgRes] = await Promise.all([
+        fetch(`${url}/memories?limit=100`),
+        getMemoryConfig(url),
+      ]);
+      if (memRes.ok) {
+        const data = await memRes.json();
+        setMemories(data.memories ?? []);
+        setStats(data.stats ?? null);
+      }
+      if (cfgRes) setMaxEntries(cfgRes.maxEntries);
     } catch { /* service down */ } finally { setLoading(false); }
   };
 
@@ -1075,8 +1086,19 @@ function MemoryTab() {
     if (!confirm('Xóa toàn bộ long-term memory?')) return;
     const { url } = await getAgentServiceConfig();
     const res = await fetch(`${url}/memories/clear`, { method: 'POST' });
-    if (res.ok) { setMemories([]); setStats({ total: 0, withEmbeddings: 0 }); setMsg({ type: 'success', text: '✅ Đã xóa toàn bộ memory' }); }
+    if (res.ok) { setMemories([]); setStats(s => s ? { ...s, total: 0, withEmbeddings: 0 } : s); setMsg({ type: 'success', text: '✅ Đã xóa toàn bộ memory' }); }
     else setMsg({ type: 'error', text: '❌ Xóa thất bại' });
+  };
+
+  const saveConfig = async () => {
+    setSavingConfig(true);
+    try {
+      const { url } = await getAgentServiceConfig();
+      const ok = await pushMemoryConfig(url, maxEntries);
+      // Also persist to extension storage for re-push on startup
+      await chrome.storage.sync.set({ memoryMaxEntries: maxEntries });
+      setMsg({ type: ok ? 'success' : 'error', text: ok ? '✅ Đã lưu cấu hình memory' : '❌ Lưu thất bại' });
+    } finally { setSavingConfig(false); }
   };
 
   const fmt = (ts: number) => new Date(ts).toLocaleString('vi-VN');
@@ -1091,8 +1113,22 @@ function MemoryTab() {
         </div>
       </div>
       <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 16, lineHeight: 1.6 }}>
-        Agent tự động tóm tắt các cuộc hội thoại và lưu vào đây. Khi bắt đầu chat mới, nội dung liên quan sẽ được inject vào context.
+        Agent tự động tóm tắt các cuộc hội thoại và lưu vào đây. Memories có nội dung tương tự được gộp lại. Khi bắt đầu chat mới, nội dung liên quan sẽ được inject vào context.
       </p>
+
+      {/* Config row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 14px', borderRadius: 10, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+        <Label style={{ margin: 0, whiteSpace: 'nowrap' }}>Max entries</Label>
+        <input
+          type="number" min={10} max={10000} value={maxEntries}
+          onChange={e => setMaxEntries(parseInt(e.target.value) || 200)}
+          style={{ width: 80, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+        />
+        <span style={{ fontSize: 12, color: '#9ca3af', flex: 1 }}>Entries vượt quá giới hạn sẽ tự động bị xóa (ưu tiên giữ lại entries quan trọng và mới nhất)</span>
+        <button onClick={saveConfig} disabled={savingConfig} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px', whiteSpace: 'nowrap' }}>
+          {savingConfig ? 'Đang lưu…' : 'Lưu'}
+        </button>
+      </div>
 
       {stats && (
         <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
@@ -1127,8 +1163,9 @@ function MemoryTab() {
                 <button onClick={() => deleteOne(m.id)} title="Xóa" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 6, border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#9ca3af', fontSize: 12 }}>✕</button>
               </div>
               <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 12 }}>
-                <span>🕐 {fmt(m.created_at)}</span>
+                <span>🕐 {fmt((m as any).updated_at || m.created_at)}</span>
                 <span style={{ fontFamily: 'monospace' }}>conv: {m.conversation_id.slice(0, 8)}…</span>
+                {(m as any).importance != null && <span>⭐ {((m as any).importance as number).toFixed(2)}</span>}
               </div>
             </div>
           ))}

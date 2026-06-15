@@ -386,6 +386,26 @@ export async function detectProviderCapabilities(
   }
 }
 
+export async function getMemoryConfig(agentServiceUrl: string): Promise<{ maxEntries: number } | null> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/memory-config`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    return res.json();
+  } catch { return null; }
+}
+
+export async function pushMemoryConfig(agentServiceUrl: string, maxEntries: number): Promise<boolean> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/memory-config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxEntries }),
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
 export async function pushNativeConfigToAgentService(
   agentServiceUrl: string,
   nativeServerUrl: string,

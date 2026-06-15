@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import * as Popover from '@radix-ui/react-popover';
 import ToolsPopover from '../components/ToolsPopover';
-import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService, fetchModels, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
+import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService, fetchModels, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
 import { useChatStore, type ChatMessage, type ToolInvocation, type MessageSegment, type ChatSession, sessionTitle, loadSessionsFromStorage, saveSessionsToStorage, upsertSession } from '../lib/chatStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -496,11 +496,14 @@ export default function ChatView({ onOpenSettings }: Props) {
     // Load session history
     loadSessionsFromStorage().then(setSessions);
 
-    // Push external MCP servers to agent-service on mount and whenever config changes
+    // Push external MCP servers + memory config to agent-service on mount
     const doPushMcp = async () => {
       const cfg = await getAgentServiceConfig();
       const mcpServers = await loadCustomMcpServers();
       pushExternalMcpServers(cfg.url, mcpServers);
+      chrome.storage.sync.get(['memoryMaxEntries'], r => {
+        if (r.memoryMaxEntries) pushMemoryConfig(cfg.url, r.memoryMaxEntries);
+      });
     };
     doPushMcp();
 

@@ -3,7 +3,7 @@ import { listTools, resetSession, setMcpConfig, getMcpConfig, setExternalMcpServ
 import { setProviderConfig, getProviderStatus } from './providers/index.js';
 import { setCustomSystemPrompt, getCustomSystemPrompt } from './config.js';
 import chatRoute, { screenshotStore } from './routes/chat.js';
-import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats } from './memory/long-term.js';
+import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats, setMemoryConfig, getMemoryConfig } from './memory/long-term.js';
 import { PREDEFINED_MODELS } from './models.js';
 import { getSkillsPublic } from './skills/registry.js';
 
@@ -277,6 +277,22 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }
+    return;
+  }
+
+  if (url.pathname === '/memory-config' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getMemoryConfig()));
+    return;
+  }
+
+  if (url.pathname === '/memory-config' && req.method === 'POST') {
+    try {
+      const { maxEntries } = await readBody(req);
+      setMemoryConfig({ maxEntries });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, config: getMemoryConfig() }));
+    } catch { res.writeHead(400).end('Invalid JSON'); }
     return;
   }
 

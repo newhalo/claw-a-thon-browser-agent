@@ -3,8 +3,9 @@
  *
  * Storage:  packages/agent-service/data/memories.db
  * Search:   cosine similarity over stored embeddings (JS), fallback to SQLite FTS5
- * Trigger:  consolidateConversation() called async after chat completion
- * Inject:   searchRelevantMemories() called at start of each chat to build context block
+ * Trigger:  consolidateConversation() — re-runs every CONSOLIDATE_EVERY_N_TURNS new user turns
+ * Inject:   searchMemories() called at start of each chat to build context block
+ * Prune:    auto-prune when total entries exceed maxEntries (configurable)
  */
 
 import Database from 'better-sqlite3';
@@ -14,6 +15,23 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const DB_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'data', 'memories.db');
+
+// Re-consolidate every N new user turns within a conversation
+const CONSOLIDATE_EVERY_N_TURNS = 5;
+
+// Similarity threshold to merge into existing memory instead of creating new entry
+const MERGE_SIMILARITY_THRESHOLD = 0.85;
+
+// ── Memory config (runtime, pushed from extension) ────────────────────────────
+let memoryConfig = { maxEntries: 200 };
+
+export function setMemoryConfig(cfg) {
+  if (cfg.maxEntries != null) memoryConfig.maxEntries = Math.max(10, parseInt(cfg.maxEntries, 10) || 200);
+}
+
+export function getMemoryConfig() {
+  return { ...memoryConfig };
+}
 
 // ── DB init ───────────────────────────────────────────────────────────────────
 
@@ -32,7 +50,8 @@ function getDb() {
       content         TEXT    NOT NULL,
       embedding       TEXT,           -- JSON float array, NULL when embedding unavailable
       importance      REAL    DEFAULT 0.5,
-      created_at      INTEGER NOT NULL
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_memories_conv ON memories(conversation_id);
@@ -41,6 +60,13 @@ function getDb() {
     CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
       USING fts5(content, content='memories', content_rowid='id', tokenize='unicode61');
   `);
+
+  // Migrate: add updated_at column if missing (existing DBs)
+  const cols = db.prepare("PRAGMA table_info(memories)").all().map(c => c.name);
+  if (!cols.includes('updated_at')) {
+    db.exec("ALTER TABLE memories ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0");
+    db.exec("UPDATE memories SET updated_at = created_at WHERE updated_at = 0");
+  }
 
   // FTS sync triggers
   db.exec(`
@@ -81,25 +107,73 @@ function cosineSimilarity(a, b) {
 
 // ── Core API ──────────────────────────────────────────────────────────────────
 
+/**
+ * Save or merge a memory entry.
+ * If an existing entry has embedding similarity >= MERGE_SIMILARITY_THRESHOLD,
+ * update it in-place instead of creating a duplicate.
+ */
 export function saveMemory(conversationId, content, embedding = null, importance = 0.5) {
   const d = getDb();
+  const now = Date.now();
+
+  // Try to merge into existing similar entry (requires embedding on both sides)
+  if (embedding) {
+    const existing = d.prepare(
+      'SELECT id, embedding FROM memories WHERE embedding IS NOT NULL ORDER BY updated_at DESC LIMIT 300'
+    ).all();
+
+    for (const row of existing) {
+      let emb;
+      try { emb = JSON.parse(row.embedding); } catch { continue; }
+      if (cosineSimilarity(embedding, emb) >= MERGE_SIMILARITY_THRESHOLD) {
+        d.prepare(
+          'UPDATE memories SET content = ?, embedding = ?, importance = ?, updated_at = ? WHERE id = ?'
+        ).run(content, JSON.stringify(embedding), Math.min(1.0, importance + 0.1), now, row.id);
+        console.log(`[memory] Merged into existing entry #${row.id}`);
+        return;
+      }
+    }
+  }
+
   d.prepare(`
-    INSERT INTO memories (conversation_id, content, embedding, importance, created_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO memories (conversation_id, content, embedding, importance, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `).run(
     conversationId,
     content,
     embedding ? JSON.stringify(embedding) : null,
     importance,
-    Date.now(),
+    now,
+    now,
   );
+
+  pruneIfNeeded();
+}
+
+/**
+ * Remove oldest, least-important entries when total exceeds maxEntries.
+ * Keeps entries sorted by importance DESC, updated_at DESC.
+ */
+function pruneIfNeeded() {
+  const d = getDb();
+  const { count } = d.prepare('SELECT COUNT(*) AS count FROM memories').get();
+  if (count <= memoryConfig.maxEntries) return;
+
+  const excess = count - memoryConfig.maxEntries;
+  // Delete the lowest-importance + oldest entries
+  d.prepare(`
+    DELETE FROM memories WHERE id IN (
+      SELECT id FROM memories ORDER BY importance ASC, updated_at ASC LIMIT ?
+    )
+  `).run(excess);
+  console.log(`[memory] Pruned ${excess} entries (max=${memoryConfig.maxEntries})`);
 }
 
 /**
  * Search memories relevant to a query.
  *
  * Strategy:
- *   1. If queryEmbedding provided → cosine similarity over all stored embeddings
+ *   1. If queryEmbedding provided → cosine similarity over stored embeddings
  *   2. Fallback to FTS5 keyword search
  *
  * Returns top-K memory objects { id, content, similarity, created_at }.
@@ -108,8 +182,9 @@ export function searchMemories(query, queryEmbedding = null, topK = 5) {
   const d = getDb();
 
   if (queryEmbedding) {
-    // Vector search — load all embeddings, rank by cosine similarity
-    const rows = d.prepare('SELECT id, content, embedding, created_at FROM memories WHERE embedding IS NOT NULL ORDER BY created_at DESC LIMIT 500').all();
+    const rows = d.prepare(
+      'SELECT id, content, embedding, updated_at AS created_at FROM memories WHERE embedding IS NOT NULL ORDER BY updated_at DESC LIMIT 500'
+    ).all();
     const scored = rows
       .map(r => {
         let emb;
@@ -120,7 +195,6 @@ export function searchMemories(query, queryEmbedding = null, topK = 5) {
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, topK);
 
-    // If best similarity is too low, fall through to FTS
     if (scored.length > 0 && scored[0].similarity > 0.3) return scored;
   }
 
@@ -128,7 +202,7 @@ export function searchMemories(query, queryEmbedding = null, topK = 5) {
   if (!query?.trim()) return [];
   try {
     const rows = d.prepare(`
-      SELECT m.id, m.content, m.created_at, fts.rank AS similarity
+      SELECT m.id, m.content, m.updated_at AS created_at, fts.rank AS similarity
       FROM memories_fts fts
       JOIN memories m ON fts.rowid = m.id
       WHERE memories_fts MATCH ?
@@ -137,13 +211,16 @@ export function searchMemories(query, queryEmbedding = null, topK = 5) {
     `).all(query.trim().split(/\s+/).map(w => w + '*').join(' OR '), topK);
     return rows;
   } catch {
-    // FTS query syntax error — return recent memories
-    return d.prepare('SELECT id, content, created_at, 0.0 AS similarity FROM memories ORDER BY created_at DESC LIMIT ?').all(topK);
+    return d.prepare(
+      'SELECT id, content, updated_at AS created_at, 0.0 AS similarity FROM memories ORDER BY updated_at DESC LIMIT ?'
+    ).all(topK);
   }
 }
 
-export function getRecentMemories(limit = 10) {
-  return getDb().prepare('SELECT id, conversation_id, content, importance, created_at FROM memories ORDER BY created_at DESC LIMIT ?').all(limit);
+export function getRecentMemories(limit = 20) {
+  return getDb().prepare(
+    'SELECT id, conversation_id, content, importance, created_at, updated_at FROM memories ORDER BY updated_at DESC LIMIT ?'
+  ).all(limit);
 }
 
 export function deleteMemory(id) {
@@ -160,32 +237,28 @@ export function getMemoryStats() {
   const d = getDb();
   const { count } = d.prepare('SELECT COUNT(*) AS count FROM memories').get();
   const { withEmbeddings } = d.prepare("SELECT COUNT(*) AS withEmbeddings FROM memories WHERE embedding IS NOT NULL").get();
-  return { total: count, withEmbeddings };
+  return { total: count, withEmbeddings, maxEntries: memoryConfig.maxEntries };
 }
 
 // ── Consolidation ─────────────────────────────────────────────────────────────
 
-// Track recently consolidated conversations (avoid duplicating within 5 min)
-const recentlyConsolidated = new Map(); // conversationId → timestamp
+// Track last consolidated turn count per conversationId
+// Value: number of user messages at last consolidation
+const consolidatedAtTurn = new Map(); // conversationId → userMsgCount
 
 /**
- * Summarize a completed conversation and save to long-term memory.
+ * Summarize a conversation and save/merge into long-term memory.
  * Called async after chat completion — never blocks the response stream.
- *
- * @param {string} conversationId
- * @param {import('ai').Message[]} messages
- * @param {() => import('ai').LanguageModel} getModelFn   — lazy to avoid circular import
- * @param {() => import('ai').EmbeddingModel | null} getEmbeddingFn
+ * Re-runs every CONSOLIDATE_EVERY_N_TURNS new user turns (not time-based).
  */
 export async function consolidateConversation(conversationId, messages, getModelFn, getEmbeddingFn) {
-  // Skip if too few messages (< 4 = 2 exchanges)
   const userMsgs = messages.filter(m => m.role === 'user');
   if (userMsgs.length < 2) return;
 
-  // Debounce — don't consolidate the same conversation within 5 minutes
-  const last = recentlyConsolidated.get(conversationId);
-  if (last && Date.now() - last < 5 * 60 * 1000) return;
-  recentlyConsolidated.set(conversationId, Date.now());
+  // Re-consolidate every N new turns
+  const lastTurn = consolidatedAtTurn.get(conversationId) ?? 0;
+  if (userMsgs.length - lastTurn < CONSOLIDATE_EVERY_N_TURNS && lastTurn > 0) return;
+  consolidatedAtTurn.set(conversationId, userMsgs.length);
 
   try {
     const extractText = (m) => typeof m.content === 'string'
@@ -194,11 +267,12 @@ export async function consolidateConversation(conversationId, messages, getModel
           ? m.content.filter(p => p.type === 'text').map(p => p.text).join(' ')
           : '');
 
+    // Full conversation digest (all turns, not just first 2)
     const digest = messages
       .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${extractText(m).slice(0, 400)}`)
+      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${extractText(m).slice(0, 500)}`)
       .join('\n')
-      .slice(0, 6000);
+      .slice(0, 8000);
 
     // Summarize via direct fetch (bypasses AI SDK to avoid hanging on some providers)
     const cfg = getProviderCfg();
@@ -211,8 +285,11 @@ export async function consolidateConversation(conversationId, messages, getModel
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
           body: JSON.stringify({
             model: cfg.model || 'gpt-4o-mini',
-            messages: [{ role: 'user', content: `Summarize this conversation in 2–3 sentences, capturing key facts, decisions, and outcomes useful for future context. Be concise.\n\n${digest}` }],
-            max_tokens: 200,
+            messages: [{
+              role: 'user',
+              content: `Summarize this conversation in 2–4 sentences. Capture key facts about the user (name, role, preferences, goals), decisions made, and outcomes. Focus on information useful in future conversations.\n\n${digest}`,
+            }],
+            max_tokens: 300,
             stream: false,
           }),
           signal: AbortSignal.timeout(30_000),
@@ -221,12 +298,11 @@ export async function consolidateConversation(conversationId, messages, getModel
         summary = data.choices?.[0]?.message?.content?.trim();
       } catch (err) {
         console.warn('[memory] Summarization failed, using fallback:', err.message);
-        summary = null;
       }
     }
-    // Fallback: concatenate user messages if summarization unavailable/failed
+    // Fallback: concatenate all user messages
     if (!summary) {
-      summary = userMsgs.map(m => extractText(m).trim()).filter(Boolean).map(t => t.slice(0, 200)).join(' | ').slice(0, 600);
+      summary = userMsgs.map(m => extractText(m).trim()).filter(Boolean).map(t => t.slice(0, 200)).join(' | ').slice(0, 800);
     }
 
     if (!summary?.trim()) return;
@@ -238,7 +314,7 @@ export async function consolidateConversation(conversationId, messages, getModel
       if (embModel) {
         const embedPromise = embed({ model: embModel, value: summary });
         const embedTimeout = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Embedding timed out after 15s')), 15_000)
+          setTimeout(() => reject(new Error('Embedding timed out')), 15_000)
         );
         const { embedding: emb } = await Promise.race([embedPromise, embedTimeout]);
         embedding = emb;
@@ -248,10 +324,10 @@ export async function consolidateConversation(conversationId, messages, getModel
     }
 
     saveMemory(conversationId, summary.trim(), embedding);
-    console.log(`[memory] Saved memory for ${conversationId}: "${summary.slice(0, 80)}…"`);
+    console.log(`[memory] Consolidated conv=${conversationId} turns=${userMsgs.length}: "${summary.slice(0, 80)}…"`);
   } catch (err) {
     console.warn('[memory] Consolidation failed:', err.message);
-    // Remove from debounce map so it can retry next turn
-    recentlyConsolidated.delete(conversationId);
+    // Roll back turn counter so next turn retries
+    consolidatedAtTurn.set(conversationId, consolidatedAtTurn.get(conversationId) - CONSOLIDATE_EVERY_N_TURNS);
   }
 }
