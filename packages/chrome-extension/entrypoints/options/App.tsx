@@ -1090,14 +1090,27 @@ function MemoryTab() {
     else setMsg({ type: 'error', text: '❌ Xóa thất bại' });
   };
 
-  const deduplicate = async () => {
-    const { url } = await getAgentServiceConfig();
-    const res = await fetch(`${url}/memories/deduplicate`, { method: 'POST' });
-    if (res.ok) {
-      const data = await res.json();
-      setMsg({ type: 'success', text: `✅ Đã gộp ${data.merged} cặp, xóa ${data.deleted} entries trùng` });
-      void load();
-    } else setMsg({ type: 'error', text: '❌ Deduplicate thất bại' });
+  const [optimizing, setOptimizing] = useState(false);
+
+  const optimizeMemory = async () => {
+    setOptimizing(true);
+    try {
+      const { url } = await getAgentServiceConfig();
+      const res = await fetch(`${url}/memories/optimize`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        const { merged = 0, deleted = 0 } = data.dedup ?? {};
+        const parts = [];
+        if (merged > 0) parts.push(`gộp ${merged} cặp trùng`);
+        if (deleted > 0) parts.push(`xóa ${deleted} entries`);
+        setMsg({ type: 'success', text: `✅ Optimize xong${parts.length ? ': ' + parts.join(', ') : ' — không có gì cần dọn'}` });
+        void load();
+      } else {
+        setMsg({ type: 'error', text: '❌ Optimize thất bại' });
+      }
+    } finally {
+      setOptimizing(false);
+    }
   };
 
   const saveConfig = async () => {
@@ -1119,7 +1132,9 @@ function MemoryTab() {
         <SectionTitle>Long-term Memory</SectionTitle>
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={load} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }}>↻ Refresh</button>
-          <button onClick={deduplicate} disabled={memories.length < 2} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }} title="Gộp các memories có nội dung tương tự">🔀 Deduplicate</button>
+          <button onClick={optimizeMemory} disabled={optimizing || memories.length < 2} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }} title="Gộp memories trùng, dọn dẹp entries thừa">
+            {optimizing ? '⏳ Optimizing…' : '✨ Optimize Memory'}
+          </button>
           <button onClick={clearAll} disabled={memories.length === 0} style={{ ...btnStyle, fontSize: 12, padding: '6px 12px', background: '#ef4444', borderColor: '#ef4444' }}>🗑 Clear all</button>
         </div>
       </div>

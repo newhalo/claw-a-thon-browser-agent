@@ -86,7 +86,11 @@ Do NOT take screenshots as a general-purpose "what's on the page" check — use 
 - If a selector fails twice, take a screenshot to visually inspect the page, then adjust
 
 ## Long-term memory
-Important facts about the user are injected at the start of each conversation as "Relevant context from past conversations". New information is automatically extracted and saved after each turn — you do not need to do anything special to save memories.
+You have a save_memory tool to persist important facts across conversations.
+- Call it when you learn the user's name, role, company, preferences, or explicit instructions ("always do X", "never do Y"), or when a key decision/outcome should be remembered.
+- Call it **in the middle of your response** (not as your only action). Write your response to the user first, call the tool, then continue if needed.
+- After calling save_memory, **always continue your response** — do not stop. The tool runs in the background.
+- Do not tell the user you saved something unless they ask.
 
 Current date: ${DATE_STR}`;
 
@@ -330,6 +334,25 @@ export default async function chatRoute(req, res) {
     : mcpTools;
 
   const tools = buildToolsFromMcp(effectiveMcpTools, enabledTools);
+
+  // Built-in save_memory tool — agent calls proactively when it learns important facts.
+  // execute returns a plain string so the model knows to continue its response (not stop).
+  tools['save_memory'] = tool({
+    description: 'Save an important fact to long-term memory. Call this mid-response when you learn the user\'s name, role, preferences, or a key decision. After calling, continue your response normally.',
+    parameters: z.object({
+      content: z.string().describe('The fact to remember. 1-3 concise sentences.'),
+    }),
+    execute: async ({ content }) => {
+      try {
+        saveMemory(conversationId, content.trim(), null, 0.8);
+        console.log(`[memory] Agent saved: "${content.slice(0, 80)}"`);
+      } catch (err) {
+        console.warn('[memory] save_memory tool error:', err.message);
+      }
+      // Return a continuation prompt so the model keeps streaming instead of stopping
+      return 'Saved. Continue your response to the user.';
+    },
+  });
 
   // Client (Zustand) already sends the full conversation history.
   // Do NOT prepend server-side history — that would duplicate messages and confuse the model.

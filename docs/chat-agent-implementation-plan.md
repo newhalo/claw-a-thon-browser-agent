@@ -500,6 +500,7 @@ Settings → group "Agent Skills":
 - **LLM summarization quality**: Hiện dùng direct `fetch` gọi cùng model đang chat. Có thể dùng model nhỏ hơn (gpt-4o-mini, qwen3-1.7b) để giảm latency/cost cho summarization.
 - **Embedding search**: Hiện cosine similarity tính trong JS trên toàn bộ DB (max 500 rows). Khi DB lớn cần pagination hoặc approximate nearest neighbor (sqlite-vec khi stable, hoặc faiss).
 - **Memory relevance**: FTS5 fallback khi không có embedding. Có thể thêm recency scoring (memories gần đây được ưu tiên).
+- **Memory Settings UI — phân trang + tìm kiếm**: Options Memory tab hiện load flat list, khi nhiều entries khó quản lý. Cần thêm: search box (FTS5 hoặc client-side filter), phân trang (page size 20–50), sort theo importance/date. Backend cần thêm `?search=&page=&limit=` params cho `GET /memories`.
 
 ### 2026-06-15 — UI fix: GFM table rendering in ChatView
 

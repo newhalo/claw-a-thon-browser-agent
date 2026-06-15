@@ -310,6 +310,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Optimize = deduplicate + prune-to-max
+  if (url.pathname === '/memories/optimize' && req.method === 'POST') {
+    try {
+      const body = req.headers['content-length'] > 0 ? await readBody(req).catch(() => ({})) : {};
+      const threshold = body.threshold ?? 0.82;
+      const dedup = deduplicateMemories(threshold);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, dedup }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
   if (url.pathname === '/memories/clear' && req.method === 'POST') {
     try {
       clearAllMemories();
