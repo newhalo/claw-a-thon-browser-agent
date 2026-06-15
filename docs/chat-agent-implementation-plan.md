@@ -485,12 +485,25 @@ Settings → group "Agent Skills":
 - [x] **`compressHistory` hang fix**: Same root cause — `generateText` + `patchToolCallIndexFetch` block cả chat request khi context > 60k tokens. Fix: dùng `fetch` trực tiếp với `AbortSignal.timeout(30s)` cho openai/openai-compat, AI SDK chỉ dùng cho Anthropic.
 - [x] **Debug logs cleanup**: Gỡ verbose debug logs khỏi `consolidateConversation`.
 
+### 2026-06-15 — Long-term memory improvements (round 2)
+
+- [x] **Turn-based consolidation**: Đổi từ time-based debounce (5 phút) sang `CONSOLIDATE_EVERY_N_TURNS=5` user turns — đảm bảo consolidation chạy đủ sau 5 lượt chat
+- [x] **Topic merge on save**: `saveMemory()` kiểm tra cosine similarity ≥ 0.85 với các entry hiện có, nếu khớp thì UPDATE thay vì INSERT → tránh duplicate entries theo chủ đề
+- [x] **Configurable max entries**: `memoryConfig.maxEntries` (default 200), `setMemoryConfig()`/`getMemoryConfig()`, endpoint `GET/POST /memory-config`, UI input trong Options Memory tab
+- [x] **Auto-prune**: `pruneIfNeeded()` tự xóa entries có `importance` thấp nhất + cũ nhất khi vượt `maxEntries`
+- [x] **`save_memory` built-in tool**: Agent gọi proactively khi thấy thông tin quan trọng (tên user, role, preferences, decisions) — không cần đợi đến consolidation turn. System prompt hướng dẫn dùng tool này ngay khi info xuất hiện.
+- [x] **`deduplicateMemories(threshold)`**: Scan pairwise tất cả embedded entries, merge pair có similarity ≥ 0.82, xóa duplicate, rebuild FTS index. Endpoint `POST /memories/deduplicate`.
+- [x] **"🔀 Deduplicate" button**: Options Memory tab — gọi deduplicate, refresh list sau.
+- [x] **Memory tab shows `updated_at` + importance badge**: UX cải thiện để xem khi nào entry được update gần nhất.
+
 ### Potential improvements — Long-term memory
 - **LLM summarization quality**: Hiện dùng direct `fetch` gọi cùng model đang chat. Có thể dùng model nhỏ hơn (gpt-4o-mini, qwen3-1.7b) để giảm latency/cost cho summarization.
 - **Embedding search**: Hiện cosine similarity tính trong JS trên toàn bộ DB (max 500 rows). Khi DB lớn cần pagination hoặc approximate nearest neighbor (sqlite-vec khi stable, hoặc faiss).
-- **Consolidation trigger**: Hiện trigger sau mỗi turn thứ 2+, debounce 5 phút. Có thể improve: trigger khi conversation dài (>10 turns), hoặc khi user explicit "remember this".
 - **Memory relevance**: FTS5 fallback khi không có embedding. Có thể thêm recency scoring (memories gần đây được ưu tiên).
-- **Memory TTL**: Hiện không có expiry. Cần cleanup cron hoặc max-count policy để tránh DB phình ra.
+
+### 2026-06-15 — UI fix: GFM table rendering in ChatView
+
+- [x] **`remarkGfm` missing in `AssistantMessage` segments renderer** (line 184 `ChatView.tsx`): `ReactMarkdown` trong streaming message loop thiếu `remarkPlugins={[remarkGfm]}` → GFM tables, strikethrough, task lists render raw. Fix: thêm plugin vào cả hai `ReactMarkdown` usages.
 
 ### 2026-06-14 — Sprint 3 + 4 complete
 
