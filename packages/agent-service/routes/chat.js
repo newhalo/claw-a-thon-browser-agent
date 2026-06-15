@@ -86,11 +86,7 @@ Do NOT take screenshots as a general-purpose "what's on the page" check — use 
 - If a selector fails twice, take a screenshot to visually inspect the page, then adjust
 
 ## Long-term memory
-You have a \`save_memory\` tool. Use it proactively whenever you learn something worth remembering:
-- User's name, role, company, preferences, or personal facts
-- Explicit user instructions ("always do X", "never do Y")
-- Important decisions or outcomes from this conversation
-Call it immediately when such information appears — don't wait until end of conversation.
+Important facts about the user are injected at the start of each conversation as "Relevant context from past conversations". New information is automatically extracted and saved after each turn — you do not need to do anything special to save memories.
 
 Current date: ${DATE_STR}`;
 
@@ -157,6 +153,65 @@ async function compressHistory(messages) {
   } catch (err) {
     console.warn('[chat] Context compression failed, using original messages:', err.message);
     return { messages, compressed: false };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MEMORY_WORTHY_PATTERN = /\b(tên|name|tôi là|i am|i'm|my name|role|position|company|prefer|thích|ghét|hate|always|never|luôn|đừng|remember|nhớ|important)\b/i;
+
+/**
+ * After each turn, check if the exchange contains memorable info and save it.
+ * Uses direct fetch (no AI SDK) to avoid patchToolCallIndexFetch hang.
+ * Only fires when the exchange matches a heuristic — avoids wasteful LLM calls.
+ */
+async function extractAndSaveMemory(conversationId, userMessages, responseMessages) {
+  const lastUser = userMessages.findLast(m => m.role === 'user');
+  if (!lastUser) return;
+
+  const userText = typeof lastUser.content === 'string'
+    ? lastUser.content
+    : (Array.isArray(lastUser.content) ? lastUser.content.filter(p => p.type === 'text').map(p => p.text).join(' ') : '');
+
+  // Quick heuristic — only run extraction if message looks like it has memorable info
+  if (!MEMORY_WORTHY_PATTERN.test(userText)) return;
+
+  const assistantText = responseMessages
+    ?.filter(m => m.role === 'assistant')
+    .map(m => typeof m.content === 'string' ? m.content
+      : (Array.isArray(m.content) ? m.content.filter(p => p.type === 'text').map(p => p.text).join(' ') : ''))
+    .join('\n') ?? '';
+
+  const exchange = `User: ${userText.slice(0, 500)}\nAssistant: ${assistantText.slice(0, 500)}`;
+
+  try {
+    const cfg = getProviderCfg();
+    if (!cfg?.apiKey || (cfg.provider !== 'openai' && cfg.provider !== 'openai-compat')) return;
+    const baseUrl = cfg.provider === 'openai' ? 'https://api.openai.com/v1' : cfg.baseUrl;
+
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.apiKey}` },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [{
+          role: 'user',
+          content: `Extract any memorable facts about the user from this exchange (name, role, company, preferences, explicit instructions). If nothing worth remembering, reply with exactly: NONE\n\nIf there IS something, reply with 1-2 concise sentences starting with "User".\n\n${exchange}`,
+        }],
+        max_tokens: 120,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const data = await res.json();
+    const fact = data.choices?.[0]?.message?.content?.trim();
+    if (!fact || fact === 'NONE' || fact.toUpperCase().startsWith('NONE')) return;
+
+    saveMemory(conversationId, fact, null, 0.8);
+    console.log(`[memory] Per-turn extract saved: "${fact.slice(0, 80)}"`);
+  } catch (err) {
+    // Non-critical — silently skip
+    console.warn('[memory] Per-turn extract failed:', err.message);
   }
 }
 
@@ -276,23 +331,6 @@ export default async function chatRoute(req, res) {
 
   const tools = buildToolsFromMcp(effectiveMcpTools, enabledTools);
 
-  // Built-in save_memory tool — agent proactively saves important facts
-  tools['save_memory'] = tool({
-    description: 'Save an important piece of information to long-term memory. Call this when you learn something significant about the user (name, role, preferences, goals) or when a key decision/fact should be remembered across future conversations.',
-    parameters: z.object({
-      content: z.string().describe('The important information to remember. Be concise and specific (1–3 sentences).'),
-    }),
-    execute: async ({ content }) => {
-      try {
-        saveMemory(conversationId, content.trim(), null, 0.8);
-        console.log(`[memory] Agent saved: "${content.slice(0, 80)}"`);
-        return { saved: true };
-      } catch (err) {
-        return { saved: false, error: err.message };
-      }
-    },
-  });
-
   // Client (Zustand) already sends the full conversation history.
   // Do NOT prepend server-side history — that would duplicate messages and confuse the model.
   const allMessages = messages;
@@ -405,6 +443,11 @@ export default async function chatRoute(req, res) {
         // Async long-term memory consolidation — fire and forget, never blocks stream
         consolidateConversation(conversationId, fullHistory, getModel, getEmbeddingModel)
           .catch(err => console.warn('[memory] consolidation error:', err?.message || err));
+
+        // Per-turn memory extraction — extract memorable facts from this exchange immediately.
+        // Runs every turn (not every N turns) to capture names, prefs, decisions right away.
+        extractAndSaveMemory(conversationId, messages, response?.messages)
+          .catch(err => console.warn('[memory] per-turn extract error:', err?.message || err));
       },
     };
 
