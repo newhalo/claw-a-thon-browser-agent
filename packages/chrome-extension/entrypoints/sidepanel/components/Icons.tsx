@@ -1,20 +1,13 @@
 import React from 'react';
 
-/** Claw mark + dot logo — used in the header */
+/** Claw arcs + agent dot logo — matches extension icon */
 export function AgentLogo({ size = 22 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Three claw marks */}
-      <path d="M7 3 C6 5 5.5 7 6.5 9.5" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
-      <path d="M9.5 2 C9 4 9 6.5 10.5 9" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
-      <path d="M12.5 3 C12.5 5 13 7 14.5 9" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
-      {/* Bot body */}
-      <rect x="5" y="10" width="14" height="9" rx="3" fill="var(--accent)" opacity="0.15" stroke="var(--accent)" strokeWidth="1.5"/>
-      {/* Eyes */}
-      <circle cx="9.5" cy="15" r="1.5" fill="var(--accent)"/>
-      <circle cx="14.5" cy="15" r="1.5" fill="var(--accent)"/>
-      {/* Agent dot */}
-      <circle cx="19" cy="5" r="3" fill="var(--success)"/>
+      <path d="M 4.5 18.19 C 9 15 9 8.81 4.5 5.81"   stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
+      <path d="M 8.44 19.5 C 13.13 15.75 13.13 8.06 8.44 4.5"  stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
+      <path d="M 12.56 20.81 C 17.63 16.31 17.63 7.69 12.56 3.19" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
+      <circle cx="19.13" cy="4.69" r="2.63" fill="var(--success)"/>
     </svg>
   );
 }

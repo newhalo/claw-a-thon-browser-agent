@@ -294,7 +294,7 @@ const server = http.createServer(async (req, res) => {
       const data = await upstream.json();
       const list = Array.isArray(data) ? data : (data.data ?? data.models ?? []);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ models: list.map(m => ({ id: m.id, name: m.display_name || m.id })) }));
+      res.end(JSON.stringify({ models: list.map(m => ({ id: m.id, name: m.display_name || m.id, model_type: m.model_type || null, status: m.status || 'enabled' })) }));
     } catch (err) {
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));

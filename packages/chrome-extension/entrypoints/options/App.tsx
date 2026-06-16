@@ -8,7 +8,7 @@ import {
   getMemoryConfig, pushMemoryConfig,
   listModelsFromProvider, listModelsForConfiguredProvider, fetchProviderConfig,
   DEFAULT_AGENT_SERVICE_URL,
-  type Skill, type CustomSkill, type CustomMcpServer,
+  type Skill, type CustomSkill, type CustomMcpServer, type ModelInfo,
 } from '../sidepanel/lib/agentServiceClient';
 import { AgentLogo } from '../sidepanel/components/Icons';
 
@@ -165,6 +165,50 @@ function GeneralTab() {
 
 // ── Provider tab ──────────────────────────────────────────────────────────────
 
+// model_type values that represent chat/LLM models (not embedding/rerank/etc.)
+const CHAT_MODEL_TYPES = new Set(['chat', 'messages', 'responses', 'generateContent']);
+
+// Human-readable labels for model_type capability badges
+const MODEL_TYPE_LABEL: Record<string, string> = {
+  chat: 'Chat', messages: 'Messages', responses: 'Responses',
+  generateContent: 'Generate', embedding: 'Embedding', rerank: 'Rerank',
+  image: 'Image', tts: 'TTS', stt: 'STT', ocr: 'OCR',
+};
+
+function isChatModel(m: ModelInfo) {
+  // If model_type is unknown (null/undefined), include it (non-VNGCloud providers)
+  return !m.model_type || CHAT_MODEL_TYPES.has(m.model_type);
+}
+function isEmbeddingModel(m: ModelInfo) {
+  return m.model_type === 'embedding';
+}
+function isEnabled(m: ModelInfo) {
+  return !m.status || m.status === 'enabled';
+}
+
+function ModelTypeBadge({ type }: { type: string | null }) {
+  if (!type || !MODEL_TYPE_LABEL[type]) return null;
+  const colors: Record<string, { bg: string; color: string }> = {
+    chat:            { bg: 'rgba(79,70,229,0.1)',   color: 'var(--accent)' },
+    messages:        { bg: 'rgba(79,70,229,0.1)',   color: 'var(--accent)' },
+    responses:       { bg: 'rgba(79,70,229,0.1)',   color: 'var(--accent)' },
+    generateContent: { bg: 'rgba(79,70,229,0.1)',   color: 'var(--accent)' },
+    embedding:       { bg: 'rgba(16,185,129,0.1)',  color: 'var(--success, #10b981)' },
+    rerank:          { bg: 'rgba(245,158,11,0.1)',  color: '#d97706' },
+    image:           { bg: 'rgba(236,72,153,0.1)',  color: '#db2777' },
+    tts:             { bg: 'rgba(14,165,233,0.1)',  color: '#0284c7' },
+    stt:             { bg: 'rgba(14,165,233,0.1)',  color: '#0284c7' },
+    ocr:             { bg: 'rgba(156,163,175,0.1)', color: 'var(--text-muted)' },
+  };
+  const c = colors[type] ?? { bg: 'rgba(156,163,175,0.1)', color: 'var(--text-muted)' };
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 5,
+      background: c.bg, color: c.color, border: `1px solid ${c.bg}`, marginLeft: 5, verticalAlign: 'middle',
+    }}>{MODEL_TYPE_LABEL[type]}</span>
+  );
+}
+
 type ProviderType = 'vngcloud' | 'openai' | 'gemini' | 'anthropic' | 'openai-compat';
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -182,7 +226,7 @@ const PROVIDER_PRESETS: Record<ProviderType, { label: string; baseUrl: string; p
 
 function ProviderTab() {
   // Current provider models list (from configured server provider)
-  const [currentModels, setCurrentModels] = useState<{ id: string; name: string }[]>([]);
+  const [currentModels, setCurrentModels] = useState<ModelInfo[]>([]);
   const [currentModelId, setCurrentModelId] = useState('');
   const [loadingCurrentModels, setLoadingCurrentModels] = useState(true);
   const [embeddingModelId, setEmbeddingModelId] = useState(DEFAULT_EMBEDDING_MODEL);
@@ -197,7 +241,7 @@ function ProviderTab() {
   const [addApiKey, setAddApiKey] = useState('');
   const [showAddApiKey, setShowAddApiKey] = useState(false);
   const [fetchingModels, setFetchingModels] = useState(false);
-  const [fetchedModels, setFetchedModels] = useState<{ id: string; name: string }[]>([]);
+  const [fetchedModels, setFetchedModels] = useState<ModelInfo[]>([]);
   const [fetchMsg, setFetchMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [addSelectedModel, setAddSelectedModel] = useState('');
   const [addTools, setAddTools] = useState(true);
@@ -354,35 +398,55 @@ function ProviderTab() {
       )}
 
       {/* Model selector for current provider */}
-      {!loadingCurrentModels && currentModels.length > 0 && (
-        <div style={{ ...formCardStyle, marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Model đang dùng</div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-            <div style={{ flex: 1 }}>
-              <select value={currentModelId} onChange={e => setCurrentModelId(e.target.value)} style={inputStyle}>
-                {currentModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
-              </select>
+      {!loadingCurrentModels && currentModels.length > 0 && (() => {
+        const chatModels = currentModels.filter(m => isChatModel(m) && isEnabled(m));
+        const embeddingModels = currentModels.filter(m => isEmbeddingModel(m) && isEnabled(m));
+        return (
+          <div style={{ ...formCardStyle, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Model đang dùng</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <select value={currentModelId} onChange={e => setCurrentModelId(e.target.value)} style={inputStyle}>
+                  {chatModels.length > 0
+                    ? chatModels.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.id}{m.model_type ? ` [${MODEL_TYPE_LABEL[m.model_type] ?? m.model_type}]` : ''}
+                        </option>
+                      ))
+                    : currentModels.filter(isEnabled).map(m => <option key={m.id} value={m.id}>{m.id}</option>)
+                  }
+                </select>
+              </div>
+              <button type="button" onClick={saveModelSwitch} disabled={switchingModel} style={{ ...btnStyle, flexShrink: 0 }}>
+                {switchingModel ? 'Đang lưu…' : 'Apply'}
+              </button>
             </div>
-            <button type="button" onClick={saveModelSwitch} disabled={switchingModel} style={{ ...btnStyle, flexShrink: 0 }}>
-              {switchingModel ? 'Đang lưu…' : 'Apply'}
-            </button>
-          </div>
-          <Msg msg={switchMsg} />
+            {/* Show selected model's type badge */}
+            {currentModelId && (() => {
+              const sel = currentModels.find(m => m.id === currentModelId);
+              return sel?.model_type ? (
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+                  Loại: <ModelTypeBadge type={sel.model_type} />
+                </div>
+              ) : null;
+            })()}
+            <Msg msg={switchMsg} />
 
-          <div style={{ marginTop: 14 }}>
-            <Label>Embedding Model <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></Label>
-            {currentModels.length > 0 ? (
-              <select value={embeddingModelId} onChange={e => setEmbeddingModelId(e.target.value)} style={inputStyle}>
-                <option value="">— Không dùng —</option>
-                {currentModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
-              </select>
-            ) : (
-              <input style={inputStyle} value={embeddingModelId} onChange={e => setEmbeddingModelId(e.target.value)} placeholder={DEFAULT_EMBEDDING_MODEL} />
-            )}
-            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Dùng cho long-term memory.</div>
+            <div style={{ marginTop: 14 }}>
+              <Label>Embedding Model <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></Label>
+              {embeddingModels.length > 0 ? (
+                <select value={embeddingModelId} onChange={e => setEmbeddingModelId(e.target.value)} style={inputStyle}>
+                  <option value="">— Không dùng —</option>
+                  {embeddingModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+                </select>
+              ) : (
+                <input style={inputStyle} value={embeddingModelId} onChange={e => setEmbeddingModelId(e.target.value)} placeholder={DEFAULT_EMBEDDING_MODEL} />
+              )}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Dùng cho long-term memory.</div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {loadingCurrentModels && status?.configured && (
         <div style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 16 }}>Đang tải danh sách model…</div>
@@ -470,7 +534,11 @@ function ProviderTab() {
             <Msg msg={fetchMsg} />
             {fetchedModels.length > 0 ? (
               <select value={addSelectedModel} onChange={e => setAddSelectedModel(e.target.value)} style={{ ...inputStyle, marginTop: 6 }}>
-                {fetchedModels.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
+                {fetchedModels.filter(m => isChatModel(m) && isEnabled(m)).map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}{m.model_type ? ` [${MODEL_TYPE_LABEL[m.model_type] ?? m.model_type}]` : ''}
+                  </option>
+                ))}
               </select>
             ) : (
               <input
@@ -503,12 +571,17 @@ function ProviderTab() {
           {/* Embedding model */}
           <div>
             <Label>Embedding Model <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></Label>
-            {fetchedModels.length > 0 ? (
-              <select value={addEmbedding} onChange={e => setAddEmbedding(e.target.value)} style={inputStyle}>
-                <option value="">— Không dùng —</option>
-                {fetchedModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
-              </select>
-            ) : (
+            {fetchedModels.length > 0 ? (() => {
+              const embModels = fetchedModels.filter(m => isEmbeddingModel(m) && isEnabled(m));
+              return embModels.length > 0 ? (
+                <select value={addEmbedding} onChange={e => setAddEmbedding(e.target.value)} style={inputStyle}>
+                  <option value="">— Không dùng —</option>
+                  {embModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+                </select>
+              ) : (
+                <input style={inputStyle} value={addEmbedding} onChange={e => setAddEmbedding(e.target.value)} placeholder={DEFAULT_EMBEDDING_MODEL} />
+              );
+            })() : (
               <input style={inputStyle} value={addEmbedding} onChange={e => setAddEmbedding(e.target.value)} placeholder={DEFAULT_EMBEDDING_MODEL} />
             )}
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Dùng cho long-term memory.</div>

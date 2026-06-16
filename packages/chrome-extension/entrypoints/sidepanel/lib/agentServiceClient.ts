@@ -436,12 +436,19 @@ export async function fetchNativeConfig(agentServiceUrl: string): Promise<{ url:
   } catch { return null; }
 }
 
+export interface ModelInfo {
+  id: string;
+  name: string;
+  model_type: string | null;
+  status: string;
+}
+
 export async function listModelsFromProvider(
   agentServiceUrl: string,
   baseUrl: string,
   apiKey?: string,
   provider?: string,
-): Promise<{ id: string; name: string }[]> {
+): Promise<ModelInfo[]> {
   const res = await fetch(`${agentServiceUrl}/list-models`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
@@ -468,7 +475,7 @@ export async function fetchProviderConfig(agentServiceUrl: string): Promise<{ pr
 /** Fetch models using the server's currently configured provider (no input needed). */
 export async function listModelsForConfiguredProvider(
   agentServiceUrl: string,
-): Promise<{ id: string; name: string }[]> {
+): Promise<ModelInfo[]> {
   try {
     const res = await fetch(`${agentServiceUrl}/list-models`, {
       method: 'POST',
