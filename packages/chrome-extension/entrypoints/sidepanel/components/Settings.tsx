@@ -137,6 +137,11 @@ function Settings({ onConfigSaved }: SettingsProps) {
     const nextDisabled = disabledSkills.filter(x => x !== id);
     setDisabledSkills(nextDisabled);
     await saveDisabledSkills(nextDisabled);
+    // also remove from activeSkills in storage so ChatView deselects it
+    chrome.storage.local.get(['activeSkills'], r => {
+      const active: string[] = Array.isArray(r.activeSkills) ? r.activeSkills : [];
+      if (active.includes(id)) chrome.storage.local.set({ activeSkills: active.filter(x => x !== id) });
+    });
   };
 
   const handleSave = async (e: React.FormEvent) => {

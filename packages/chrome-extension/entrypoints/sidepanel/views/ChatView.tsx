@@ -497,6 +497,13 @@ export default function ChatView({ onOpenSettings }: Props) {
     const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.disabledSkills)           setDisabledSkillIds(changes.disabledSkills.newValue ?? []);
       if (changes.customSkills)             setCustomSkills(changes.customSkills.newValue ?? []);
+      if (changes.activeSkills) {
+        const next: string[] = changes.activeSkills.newValue ?? [];
+        // Sync Zustand: toggle any IDs that differ from current state
+        const cur = useChatStore.getState().activeSkills;
+        cur.filter((id: string) => !next.includes(id)).forEach((id: string) => toggleSkill(id));
+        next.filter((id: string) => !cur.includes(id)).forEach((id: string) => toggleSkill(id));
+      }
       if (changes.customMcpServers)         doPushMcp();
       if (changes.disabledExternalMcpTools) setDisabledExternalTools(changes.disabledExternalMcpTools.newValue ?? []);
       if (changes.agentProviderConfig) {
