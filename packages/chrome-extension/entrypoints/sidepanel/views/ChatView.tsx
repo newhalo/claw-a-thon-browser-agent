@@ -477,18 +477,26 @@ export default function ChatView({ onOpenSettings }: Props) {
           setActiveModelId(match?.id ?? list[0]?.id ?? serverCfg?.model ?? '');
         });
       });
-      fetchSkills(cfg.url).then(setSkills);
+      // Load skills + custom skills + saved activeSkills together, then validate
+      Promise.all([
+        fetchSkills(cfg.url),
+        loadCustomSkills(),
+        new Promise<string[]>(res => chrome.storage.local.get(['activeSkills'], r => res(Array.isArray(r.activeSkills) ? r.activeSkills : []))),
+      ]).then(([builtinSkills, customSkillList, savedActive]) => {
+        setSkills(builtinSkills);
+        setCustomSkills(customSkillList);
+        // Only restore IDs that still exist
+        const validIds = new Set([...builtinSkills.map(s => s.id), ...customSkillList.map(s => s.id)]);
+        const validActive = savedActive.filter(id => validIds.has(id));
+        if (validActive.length !== savedActive.length) {
+          chrome.storage.local.set({ activeSkills: validActive });
+        }
+        validActive.forEach((id: string) => {
+          if (!useChatStore.getState().activeSkills.includes(id)) toggleSkill(id);
+        });
+      });
     });
     loadDisabledSkills().then(setDisabledSkillIds);
-    loadCustomSkills().then(setCustomSkills);
-    // Restore active skills across sidepanel reloads
-    chrome.storage.local.get(['activeSkills'], r => {
-      if (Array.isArray(r.activeSkills) && r.activeSkills.length > 0) {
-        r.activeSkills.forEach((id: string) => {
-          if (!activeSkills.includes(id)) toggleSkill(id);
-        });
-      }
-    });
     chrome.storage.sync.get('disabledExternalMcpTools', r => {
       setDisabledExternalTools(Array.isArray(r.disabledExternalMcpTools) ? r.disabledExternalMcpTools : []);
     });
