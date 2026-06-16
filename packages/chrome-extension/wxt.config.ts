@@ -1,9 +1,11 @@
 import { defineConfig } from 'wxt';
 
+const isDev = process.env.NODE_ENV === 'development';
+
 export default defineConfig({
   outDir: 'dist',
   manifest: {
-    name: 'Browser Agent',
+    name: isDev ? 'Browser Agent [DEV]' : 'Browser Agent',
     description: 'MCP extension connecting to Claw-a-thon native server',
     version: '1.0.0',
     manifest_version: 3,

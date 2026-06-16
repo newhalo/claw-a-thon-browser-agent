@@ -48,12 +48,16 @@ function patchToolCallIndexFetch(url, init) {
 // Runtime config — can be overridden via setProviderConfig()
 let runtimeConfig = null;
 
-// Defaults from .env
+// Defaults from .env — PROVIDER=vngcloud keeps its identity; mapped to sdk type in buildInstance
+const isVngCloud = (process.env.PROVIDER || '').toLowerCase() === 'vngcloud';
 const envConfig = {
-  provider: process.env.PROVIDER || null,
-  apiKey: process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.CUSTOM_API_KEY || null,
-  model: process.env.ANTHROPIC_MODEL || process.env.OPENAI_MODEL || process.env.CUSTOM_MODEL || null,
-  baseUrl: process.env.CUSTOM_BASE_URL || null,
+  provider: process.env.PROVIDER || null,   // preserve 'vngcloud' as-is
+  apiKey: (isVngCloud ? process.env.VNGCLOUD_API_KEY : null)
+    || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || process.env.CUSTOM_API_KEY || null,
+  model: (isVngCloud ? process.env.VNGCLOUD_DEFAULT_MODEL : null)
+    || process.env.ANTHROPIC_DEFAULT_MODEL || process.env.OPENAI_DEFAULT_MODEL || process.env.CUSTOM_DEFAULT_MODEL
+    || process.env.ANTHROPIC_MODEL || process.env.OPENAI_MODEL || process.env.CUSTOM_MODEL || null,
+  baseUrl: (isVngCloud ? process.env.VNGCLOUD_BASE_URL : null) || process.env.CUSTOM_BASE_URL || null,
   toolsSupported: process.env.CUSTOM_TOOLS_SUPPORTED === 'true' ? true : null,
   visionSupported: process.env.CUSTOM_VISION_SUPPORTED === 'true' ? true : null,
 };
@@ -85,14 +89,14 @@ export function getProviderStatus() {
 export function isToolsSupported() {
   const cfg = runtimeConfig || envConfig;
   if (cfg.provider === 'anthropic' || cfg.provider === 'openai') return true;
-  if (cfg.provider === 'openai-compat') return cfg.toolsSupported === true;
+  if (cfg.provider === 'openai-compat' || cfg.provider === 'vngcloud') return cfg.toolsSupported === true;
   return false;
 }
 
 export function isVisionSupported() {
   const cfg = runtimeConfig || envConfig;
   if (cfg.provider === 'anthropic' || cfg.provider === 'openai') return true;
-  if (cfg.provider === 'openai-compat') return cfg.visionSupported === true;
+  if (cfg.provider === 'openai-compat' || cfg.provider === 'vngcloud') return cfg.visionSupported === true;
   return false;
 }
 
@@ -114,6 +118,7 @@ function buildInstance(cfg) {
         name: 'OpenAI',
       };
     }
+    case 'vngcloud':
     case 'openai-compat': {
       if (!cfg.apiKey) throw new Error('API key required for custom provider');
       if (!cfg.baseUrl) throw new Error('Base URL required for custom provider');

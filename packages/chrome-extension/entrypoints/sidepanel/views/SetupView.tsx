@@ -1,19 +1,147 @@
 import React, { useEffect, useState } from 'react';
-import { pushNativeConfigToAgentService, pushProviderConfig, fetchModels, type PredefinedModel } from '../lib/agentServiceClient';
+import {
+  checkAgentServiceHealthFull,
+  saveAgentServiceConfig,
+  setAgentToken,
+  fetchNativeConfig,
+  pushProviderConfig,
+  fetchModels,
+  DEFAULT_AGENT_SERVICE_URL,
+  type PredefinedModel,
+  type HealthStatus,
+} from '../lib/agentServiceClient';
+
+type SetupMode = 'connection' | 'provider';
 
 interface SetupViewProps {
+  mode: SetupMode;
   agentServiceUrl: string;
-  nativeServerUrl: string;
-  nativeAuthToken: string;
-  onDone: () => void;
+  health: HealthStatus | null;
+  onConnectionDone: (url: string, token: string, health: HealthStatus) => void;
+  onProviderDone: () => void;
 }
 
-export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuthToken, onDone }: SetupViewProps) {
+export default function SetupView({ mode, agentServiceUrl, health, onConnectionDone, onProviderDone }: SetupViewProps) {
+  return mode === 'connection'
+    ? <ConnectionStep onDone={onConnectionDone} />
+    : <ProviderStep agentServiceUrl={agentServiceUrl} health={health} onDone={onProviderDone} />;
+}
+
+// ── Step 1: Connection ────────────────────────────────────────────────────────
+
+function ConnectionStep({ onDone }: { onDone: (url: string, token: string, health: HealthStatus) => void }) {
+  const [url, setUrl] = useState(DEFAULT_AGENT_SERVICE_URL);
+  const [token, setToken] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    // Pre-fill saved values
+    chrome.storage.sync.get(['agentServiceUrl', 'agentToken'], (r) => {
+      if (r.agentServiceUrl) setUrl(r.agentServiceUrl);
+      if (r.agentToken) setToken(r.agentToken);
+    });
+  }, []);
+
+  const handleConnect = async () => {
+    setError('');
+    const trimmedUrl = url.trim().replace(/\/+$/, '');
+    if (!trimmedUrl) { setError('Nhập URL của agent-service'); return; }
+
+    setLoading(true);
+    try {
+      // Update module-level token so health check uses it
+      setAgentToken(token.trim());
+
+      const h = await checkAgentServiceHealthFull(trimmedUrl);
+      if (!h) {
+        setError('Không kết nối được agent-service. Kiểm tra URL và server đang chạy.');
+        setLoading(false);
+        return;
+      }
+
+      if (h.authRequired && !token.trim()) {
+        setError('Server yêu cầu Auth Token. Nhập token để tiếp tục.');
+        setLoading(false);
+        return;
+      }
+
+      // Save agent-service connection config
+      await saveAgentServiceConfig({ url: trimmedUrl, token: token.trim() });
+
+      // Fetch native-server config from agent-service (auth-protected) and notify background
+      const nativeCfg = await fetchNativeConfig(trimmedUrl);
+      if (nativeCfg?.url) {
+        chrome.runtime.sendMessage({
+          type: 'SAVE_CONFIG',
+          config: { nativeServerUrl: nativeCfg.url, authToken: nativeCfg.token || '' }
+        });
+      }
+
+      onDone(trimmedUrl, token.trim(), h);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <SetupShell
+      icon="🔌"
+      title="Kết nối Agent Service"
+      subtitle="Nhập địa chỉ và token xác thực của agent-service để bắt đầu."
+    >
+      <div>
+        <label style={labelStyle}>Agent Service URL</label>
+        <input
+          type="url"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleConnect()}
+          placeholder="http://localhost:3000"
+          style={inputStyle}
+          autoComplete="off"
+        />
+      </div>
+
+      <div>
+        <label style={labelStyle}>Auth Token <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(để trống nếu không cần)</span></label>
+        <input
+          type="password"
+          value={token}
+          onChange={e => setToken(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && handleConnect()}
+          placeholder="your-secret-token"
+          style={inputStyle}
+          autoComplete="off"
+        />
+      </div>
+
+      {error && <ErrorBox message={error} />}
+
+      <button onClick={handleConnect} disabled={loading} style={primaryBtn(loading)}>
+        {loading ? 'Đang kết nối…' : '→ Kết nối'}
+      </button>
+
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.6 }}>
+        Token được lưu trong extension storage của trình duyệt.
+      </div>
+    </SetupShell>
+  );
+}
+
+// ── Step 2: Provider ──────────────────────────────────────────────────────────
+
+function ProviderStep({ agentServiceUrl, health, onDone }: { agentServiceUrl: string; health: HealthStatus | null; onDone: () => void }) {
   const [models, setModels] = useState<PredefinedModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const selectedModel = models.find(m => m.id === selectedModelId);
+  const isCustom = selectedModel?.category === 'Custom' || !selectedModel?.baseUrl?.includes('localhost');
+  const needsApiKey = true; // Always ask for API key in setup — server stores it at runtime
 
   useEffect(() => {
     fetchModels(agentServiceUrl).then(list => {
@@ -21,16 +149,10 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
       const def = list.find(m => m.default) ?? list[0];
       if (def) setSelectedModelId(def.id);
     });
-    // Pre-fill saved API key if any
-    chrome.storage.sync.get(['agentProviderConfig'], result => {
-      if (result.agentProviderConfig?.apiKey) setApiKey(result.agentProviderConfig.apiKey);
+    chrome.storage.sync.get(['agentProviderConfig'], r => {
+      if (r.agentProviderConfig?.apiKey) setApiKey(r.agentProviderConfig.apiKey);
     });
   }, [agentServiceUrl]);
-
-  const selectedModel = models.find(m => m.id === selectedModelId);
-
-  // Group models by category for the dropdown
-  const categories = Array.from(new Set(models.map(m => m.category)));
 
   const handleSave = async () => {
     setError('');
@@ -39,24 +161,8 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
 
     setSaving(true);
     try {
-      if (nativeServerUrl) {
-        await pushNativeConfigToAgentService(agentServiceUrl, nativeServerUrl, nativeAuthToken);
-      }
-
-      const ok = await pushProviderConfig(
-        agentServiceUrl,
-        selectedModel.provider,
-        apiKey.trim(),
-        selectedModel.id,
-        selectedModel.baseUrl,
-        selectedModel.toolsSupported,
-        selectedModel.visionSupported,
-      );
-      if (!ok) { setError('Agent service không phản hồi'); return; }
-
       chrome.storage.sync.set({
         agentProviderConfig: {
-          modelId: selectedModel.id,
           provider: selectedModel.provider,
           apiKey: apiKey.trim(),
           model: selectedModel.id,
@@ -66,67 +172,62 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
         }
       });
 
+      pushProviderConfig(
+        agentServiceUrl,
+        selectedModel.provider,
+        apiKey.trim(),
+        selectedModel.id,
+        selectedModel.baseUrl,
+        selectedModel.toolsSupported,
+        selectedModel.visionSupported,
+      ).catch(() => {});
+
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Kết nối thất bại');
+      setError(err instanceof Error ? err.message : 'Lỗi không xác định');
     } finally {
       setSaving(false);
     }
   };
 
+  const categories = Array.from(new Set(models.map(m => m.category)));
+
   return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', height: '100%',
-      background: 'var(--bg-base)', overflow: 'auto',
-    }}>
-      <div style={{ padding: '20px 20px 0', textAlign: 'center' }}>
-        <div style={{ fontSize: 32, marginBottom: 10 }}>🚀</div>
-        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)' }}>
-          Cấu hình Agent
-        </h2>
-        <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-          Chọn model và nhập API key để bắt đầu.
-        </p>
+    <SetupShell
+      icon="🤖"
+      title="Cấu hình Model"
+      subtitle={health?.authRequired
+        ? 'Chọn model và nhập API key cho lần đầu sử dụng.'
+        : 'Provider chưa được cấu hình trên server. Chọn model và nhập API key.'}
+    >
+      <div>
+        <label style={labelStyle}>Model</label>
+        {models.length === 0 ? (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>Đang tải…</div>
+        ) : (
+          <select value={selectedModelId} onChange={e => setSelectedModelId(e.target.value)} style={selectStyle}>
+            {categories.map(cat => (
+              <optgroup key={cat} label={cat}>
+                {models.filter(m => m.category === cat).map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        )}
+
+        {selectedModel && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
+            <CapBadge label="Tools" active={selectedModel.toolsSupported} />
+            <CapBadge label="Vision" active={selectedModel.visionSupported} />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 2 }}>
+              {selectedModel.provider}{selectedModel.baseUrl ? ` · ${new URL(selectedModel.baseUrl).hostname}` : ''}
+            </span>
+          </div>
+        )}
       </div>
 
-      <div style={{ padding: '16px 20px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-        {/* Model selector */}
-        <div>
-          <label style={labelStyle}>Model</label>
-          {models.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '8px 0' }}>
-              Đang tải danh sách model…
-            </div>
-          ) : (
-            <select
-              value={selectedModelId}
-              onChange={e => setSelectedModelId(e.target.value)}
-              style={selectStyle}
-            >
-              {categories.map(cat => (
-                <optgroup key={cat} label={cat}>
-                  {models.filter(m => m.category === cat).map(m => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          )}
-
-          {/* Model capability badges */}
-          {selectedModel && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
-              <CapBadge label="Tools" active={selectedModel.toolsSupported} />
-              <CapBadge label="Vision" active={selectedModel.visionSupported} />
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 2 }}>
-                {selectedModel.provider}{selectedModel.baseUrl ? ` · ${new URL(selectedModel.baseUrl).hostname}` : ''}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* API Key */}
+      {needsApiKey && (
         <div>
           <label style={labelStyle}>API Key</label>
           <input
@@ -137,37 +238,53 @@ export default function SetupView({ agentServiceUrl, nativeServerUrl, nativeAuth
             style={inputStyle}
             autoComplete="off"
           />
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.5 }}>
+            {isCustom
+              ? 'API key của custom provider — lưu trong extension.'
+              : 'API key của bạn cho model này — được gửi tới agent-service local.'}
+          </div>
         </div>
+      )}
 
-        {error && (
-          <div style={{
-            padding: '8px 12px', borderRadius: 7, fontSize: 12,
-            background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
-            color: 'var(--error)',
-          }}>⚠️ {error}</div>
-        )}
+      {error && <ErrorBox message={error} />}
 
-        <button
-          onClick={handleSave}
-          disabled={saving || !apiKey.trim() || !selectedModel}
-          style={{
-            padding: '10px', borderRadius: 9, border: 'none',
-            background: saving || !apiKey.trim() ? 'var(--bg-active)' : 'var(--accent)',
-            color: saving || !apiKey.trim() ? 'var(--text-muted)' : 'white',
-            cursor: saving || !apiKey.trim() ? 'default' : 'pointer',
-            fontWeight: 600, fontSize: 14, marginTop: 4,
-            transition: 'background 0.15s',
-          }}
-        >
-          {saving ? 'Đang lưu…' : '✓ Bắt đầu Chat'}
-        </button>
+      <button
+        onClick={handleSave}
+        disabled={saving || !apiKey.trim() || !selectedModel}
+        style={primaryBtn(saving || !apiKey.trim() || !selectedModel)}
+      >
+        {saving ? 'Đang lưu…' : '✓ Bắt đầu Chat'}
+      </button>
+    </SetupShell>
+  );
+}
 
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.6 }}>
-          API key được lưu trong extension storage của trình duyệt.<br />
-          Không gửi đi đâu ngoài agent-service chạy local.
-        </div>
+// ── Shared UI ─────────────────────────────────────────────────────────────────
+
+function SetupShell({ icon, title, subtitle, children }: {
+  icon: string; title: string; subtitle: string; children: React.ReactNode
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-base)', overflow: 'auto' }}>
+      <div style={{ padding: '24px 20px 0', textAlign: 'center' }}>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>{icon}</div>
+        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6, color: 'var(--text-primary)' }}>{title}</h2>
+        <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, maxWidth: 280, margin: '0 auto' }}>{subtitle}</p>
+      </div>
+      <div style={{ padding: '20px 20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {children}
       </div>
     </div>
+  );
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div style={{
+      padding: '8px 12px', borderRadius: 7, fontSize: 12,
+      background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
+      color: 'var(--error)',
+    }}>⚠️ {message}</div>
   );
 }
 
@@ -205,3 +322,12 @@ const selectStyle: React.CSSProperties = {
   background: 'var(--bg-elevated)', color: 'var(--text-primary)',
   outline: 'none', cursor: 'pointer',
 };
+
+const primaryBtn = (disabled: boolean): React.CSSProperties => ({
+  padding: '10px', borderRadius: 9, border: 'none',
+  background: disabled ? 'var(--bg-active)' : 'var(--accent)',
+  color: disabled ? 'var(--text-muted)' : 'white',
+  cursor: disabled ? 'default' : 'pointer',
+  fontWeight: 600, fontSize: 14, marginTop: 4,
+  transition: 'background 0.15s',
+});

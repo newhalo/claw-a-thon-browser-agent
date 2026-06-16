@@ -1,13 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import {
   getAgentServiceConfig, checkAgentServiceHealthFull,
-  pushProviderConfig, pushNativeConfigToAgentService, pushSystemPrompt,
-  fetchModels, fetchSkills, fetchSkillFromUrl, detectProviderCapabilities,
+  pushProviderConfig, pushSystemPrompt,
+  fetchSkills, fetchSkillFromUrl, detectProviderCapabilities,
   loadCustomSkills, saveCustomSkills, loadDisabledSkills, saveDisabledSkills,
   loadCustomMcpServers, saveCustomMcpServers, pushExternalMcpServers, parseMcpConfigJson, testMcpServer,
   getMemoryConfig, pushMemoryConfig,
-  type PredefinedModel, type Skill, type CustomSkill, type CustomMcpServer,
+  listModelsFromProvider, listModelsForConfiguredProvider, fetchProviderConfig,
+  DEFAULT_AGENT_SERVICE_URL,
+  type Skill, type CustomSkill, type CustomMcpServer, type ModelInfo,
 } from '../sidepanel/lib/agentServiceClient';
+import { AgentLogo } from '../sidepanel/components/Icons';
 
 type Tab = 'general' | 'provider' | 'skills' | 'mcp' | 'memory' | 'security';
 
@@ -20,6 +23,8 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'security', label: 'Security', icon: '🔑' },
 ];
 
+const DEFAULT_EMBEDDING_MODEL = 'qwen/qwen3-embedding-8b';
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 function Msg({ msg }: { msg: { type: 'success' | 'error'; text: string } | null }) {
@@ -29,86 +34,81 @@ function Msg({ msg }: { msg: { type: 'success' | 'error'; text: string } | null 
       marginTop: 8, padding: '8px 12px', borderRadius: 8, fontSize: 12,
       background: msg.type === 'error' ? 'rgba(239,68,68,0.07)' : 'rgba(16,185,129,0.07)',
       border: `1px solid ${msg.type === 'error' ? 'rgba(239,68,68,0.25)' : 'rgba(16,185,129,0.25)'}`,
-      color: msg.type === 'error' ? '#ef4444' : '#10b981',
+      color: msg.type === 'error' ? 'var(--error, #ef4444)' : 'var(--success, #10b981)',
     }}>{msg.text}</div>
   );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: '#1a1a2e' }}>{children}</h2>;
+  return <h2 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16, color: 'var(--text-primary)', margin: '0 0 16px' }}>{children}</h2>;
 }
 
 function Divider() {
-  return <div style={{ borderTop: '1px solid #e5e7eb', margin: '24px 0' }} />;
+  return <div style={{ borderTop: '1px solid var(--border)', margin: '24px 0' }} />;
 }
 
-function Label({ children }: { children: React.ReactNode }) {
-  return <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#6b7280', marginBottom: 5 }}>{children}</label>;
+function Label({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 5, ...style }}>{children}</label>;
 }
 
 const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '8px 11px', border: '1px solid #e5e7eb', borderRadius: 8,
-  fontSize: 13, background: '#fff', color: '#1a1a2e', fontFamily: 'inherit',
-  outline: 'none',
+  width: '100%', padding: '8px 11px', border: '1px solid var(--border)', borderRadius: 8,
+  fontSize: 13, background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontFamily: 'inherit',
+  outline: 'none', boxSizing: 'border-box',
 };
 
 const btnStyle: React.CSSProperties = {
   padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-  cursor: 'pointer', border: '1px solid #4f46e5', background: '#4f46e5', color: '#fff',
+  cursor: 'pointer', border: '1px solid var(--accent)', background: 'var(--accent)', color: '#fff',
 };
 
 const btnSecStyle: React.CSSProperties = {
-  ...btnStyle, background: 'transparent', color: '#4f46e5',
+  ...btnStyle, background: 'transparent', color: 'var(--accent)',
+};
+
+const cardStyle: React.CSSProperties = {
+  background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10,
+};
+
+const formCardStyle: React.CSSProperties = {
+  ...cardStyle, padding: 16, marginBottom: 20,
 };
 
 // ── General tab ───────────────────────────────────────────────────────────────
 
 function GeneralTab() {
-  const [url, setUrl] = useState('');
-  const [token, setToken] = useState('');
-  const [agentUrl, setAgentUrl] = useState('http://localhost:3000');
+  const [agentUrl, setAgentUrl] = useState(DEFAULT_AGENT_SERVICE_URL);
+  const [agentToken, setAgentTokenState] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [connectionSaving, setConnectionSaving] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
   const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [promptMsg, setPromptMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, r => {
-      setUrl(r?.config?.nativeServerUrl || '');
-      setToken(r?.config?.authToken || '');
-    });
-    getAgentServiceConfig().then(c => setAgentUrl(c.url));
+    getAgentServiceConfig().then(c => { setAgentUrl(c.url); setAgentTokenState(c.token); });
     chrome.storage.sync.get(['agentCustomSystemPrompt'], r => setCustomPrompt(r.agentCustomSystemPrompt || ''));
   }, []);
 
-  const save = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true); setMsg(null);
-    chrome.runtime.sendMessage({ type: 'SAVE_CONFIG', config: { nativeServerUrl: url, authToken: token } }, r => {
-      setLoading(false);
-      setMsg(r?.success ? { type: 'success', text: '✅ Đã lưu cấu hình!' } : { type: 'error', text: '❌ Lưu thất bại' });
-    });
-  };
-
-  const test = () => {
-    setLoading(true); setMsg(null);
-    chrome.runtime.sendMessage({ type: 'TEST_CONNECTION', config: { nativeServerUrl: url, authToken: token } }, r => {
-      setLoading(false);
-      setMsg(r?.success ? { type: 'success', text: '✅ Kết nối thành công!' } : { type: 'error', text: `❌ ${r?.error || 'Kết nối thất bại'}` });
-    });
-  };
-
-  const saveAgentUrl = () => {
-    chrome.storage.sync.set({ agentServiceUrl: agentUrl });
-    setMsg({ type: 'success', text: '✅ Đã lưu Agent Service URL' });
+  const saveConnection = async () => {
+    setConnectionSaving(true); setMsg(null);
+    try {
+      const trimmedUrl = agentUrl.trim().replace(/\/+$/, '');
+      const { saveAgentServiceConfig, setAgentToken } = await import('../sidepanel/lib/agentServiceClient');
+      await saveAgentServiceConfig({ url: trimmedUrl, token: agentToken.trim() });
+      setAgentToken(agentToken.trim());
+      setMsg({ type: 'success', text: '✅ Đã lưu cấu hình kết nối' });
+    } catch {
+      setMsg({ type: 'error', text: '❌ Lưu thất bại' });
+    } finally {
+      setConnectionSaving(false);
+    }
   };
 
   const savePrompt = async () => {
     setPromptSaving(true); setPromptMsg(null);
     try {
-      const { url: aUrl } = await getAgentServiceConfig();
-      await pushSystemPrompt(aUrl, customPrompt.trim());
+      await pushSystemPrompt(agentUrl, customPrompt.trim());
       chrome.storage.sync.set({ agentCustomSystemPrompt: customPrompt.trim() });
       setPromptMsg({ type: 'success', text: '✅ Đã lưu!' });
     } catch {
@@ -120,38 +120,31 @@ function GeneralTab() {
 
   return (
     <div>
-      <SectionTitle>Native Server</SectionTitle>
-      <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div>
-          <Label>Server URL</Label>
-          <input style={inputStyle} type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="http://localhost:8080" required />
-        </div>
-        <div>
-          <Label>Auth Token</Label>
-          <input style={inputStyle} type="password" value={token} onChange={e => setToken(e.target.value)} placeholder="your-strong-token-here" required />
-        </div>
-        <Msg msg={msg} />
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button type="button" onClick={test} disabled={!url || !token || loading} style={btnSecStyle}>🔗 Test</button>
-          <button type="submit" disabled={!url || !token || loading} style={btnStyle}>{loading ? 'Saving…' : '💾 Save'}</button>
-        </div>
-      </form>
-
-      <Divider />
-
       <SectionTitle>Agent Service</SectionTitle>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <div style={{ flex: 1 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
+        Địa chỉ và token xác thực để kết nối với agent-service.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div>
           <Label>Service URL</Label>
           <input style={inputStyle} type="url" value={agentUrl} onChange={e => setAgentUrl(e.target.value)} placeholder="http://localhost:3000" />
         </div>
-        <button onClick={saveAgentUrl} style={btnStyle}>Save</button>
+        <div>
+          <Label>Auth Token <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(để trống nếu không cần)</span></Label>
+          <input style={inputStyle} type="password" value={agentToken} onChange={e => setAgentTokenState(e.target.value)} placeholder="your-secret-token" autoComplete="off" />
+        </div>
+        <Msg msg={msg} />
+        <div>
+          <button onClick={saveConnection} disabled={connectionSaving} style={btnStyle}>
+            {connectionSaving ? 'Đang lưu…' : '💾 Save'}
+          </button>
+        </div>
       </div>
 
       <Divider />
 
       <SectionTitle>Custom Instructions</SectionTitle>
-      <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 10, lineHeight: 1.6 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.6 }}>
         Append thêm hướng dẫn riêng vào system prompt mặc định.
       </p>
       <textarea
@@ -172,318 +165,437 @@ function GeneralTab() {
 
 // ── Provider tab ──────────────────────────────────────────────────────────────
 
-function CapBadge({ label, active }: { label: string; active: boolean }) {
+// model_type values that represent chat/LLM models (not embedding/rerank/etc.)
+const CHAT_MODEL_TYPES = new Set(['chat', 'messages', 'responses', 'generateContent']);
+
+// Human-readable labels for model_type capability badges
+const MODEL_TYPE_LABEL: Record<string, string> = {
+  chat: 'Chat', messages: 'Messages', responses: 'Responses',
+  generateContent: 'Generate', embedding: 'Embedding', rerank: 'Rerank',
+  image: 'Image', tts: 'TTS', stt: 'STT', ocr: 'OCR',
+};
+
+function isChatModel(m: ModelInfo) {
+  // If model_type is unknown (null/undefined), include it (non-VNGCloud providers)
+  return !m.model_type || CHAT_MODEL_TYPES.has(m.model_type);
+}
+function isEmbeddingModel(m: ModelInfo) {
+  return m.model_type === 'embedding';
+}
+function isEnabled(m: ModelInfo) {
+  return !m.status || m.status === 'enabled';
+}
+
+function ModelTypeBadge({ type }: { type: string | null }) {
+  if (!type || !MODEL_TYPE_LABEL[type]) return null;
+  const colors: Record<string, { bg: string; color: string }> = {
+    chat:            { bg: 'rgba(79,70,229,0.1)',   color: 'var(--accent)' },
+    messages:        { bg: 'rgba(79,70,229,0.1)',   color: 'var(--accent)' },
+    responses:       { bg: 'rgba(79,70,229,0.1)',   color: 'var(--accent)' },
+    generateContent: { bg: 'rgba(79,70,229,0.1)',   color: 'var(--accent)' },
+    embedding:       { bg: 'rgba(16,185,129,0.1)',  color: 'var(--success, #10b981)' },
+    rerank:          { bg: 'rgba(245,158,11,0.1)',  color: '#d97706' },
+    image:           { bg: 'rgba(236,72,153,0.1)',  color: '#db2777' },
+    tts:             { bg: 'rgba(14,165,233,0.1)',  color: '#0284c7' },
+    stt:             { bg: 'rgba(14,165,233,0.1)',  color: '#0284c7' },
+    ocr:             { bg: 'rgba(156,163,175,0.1)', color: 'var(--text-muted)' },
+  };
+  const c = colors[type] ?? { bg: 'rgba(156,163,175,0.1)', color: 'var(--text-muted)' };
   return (
     <span style={{
-      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
-      background: active ? 'rgba(16,185,129,0.1)' : 'rgba(156,163,175,0.1)',
-      color: active ? '#10b981' : '#9ca3af',
-      border: `1px solid ${active ? 'rgba(16,185,129,0.3)' : 'rgba(156,163,175,0.2)'}`,
-    }}>
-      {active ? '✓' : '✗'} {label}
-    </span>
+      fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 5,
+      background: c.bg, color: c.color, border: `1px solid ${c.bg}`, marginLeft: 5, verticalAlign: 'middle',
+    }}>{MODEL_TYPE_LABEL[type]}</span>
   );
 }
 
-const CUSTOM_ID = '__custom__';
+type ProviderType = 'vngcloud' | 'openai' | 'gemini' | 'anthropic' | 'openai-compat';
+
+const PROVIDER_LABEL: Record<string, string> = {
+  vngcloud: 'VNGCloud', openai: 'OpenAI', gemini: 'Gemini',
+  anthropic: 'Anthropic', 'openai-compat': 'OpenAI-compatible',
+};
+
+const PROVIDER_PRESETS: Record<ProviderType, { label: string; baseUrl: string; placeholder: string }> = {
+  vngcloud:        { label: 'VNGCloud',         baseUrl: 'https://maas-llm-aiplatform-hcm.api.vngcloud.vn/v1',           placeholder: 'vn-…' },
+  openai:          { label: 'OpenAI',           baseUrl: 'https://api.openai.com/v1',                                     placeholder: 'sk-…' },
+  gemini:          { label: 'Gemini',           baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',       placeholder: 'AIza…' },
+  anthropic:       { label: 'Anthropic',        baseUrl: '',                                                              placeholder: 'sk-ant-…' },
+  'openai-compat': { label: 'OpenAI-compatible', baseUrl: '',                                                             placeholder: 'your-api-key' },
+};
 
 function ProviderTab() {
-  const [models, setModels] = useState<PredefinedModel[]>([]);
-  const [selectedId, setSelectedId] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [customProviderType, setCustomProviderType] = useState<'openai-compat' | 'anthropic' | 'openai'>('openai-compat');
-  const [customBaseUrl, setCustomBaseUrl] = useState('');
-  const [customModelId, setCustomModelId] = useState('');
-  const [customTools, setCustomTools] = useState(true);
-  const [customVision, setCustomVision] = useState(false);
-  const [embeddingModelId, setEmbeddingModelId] = useState('');
-  const [showApiKey, setShowApiKey] = useState(false);
-  const [detecting, setDetecting] = useState(false);
+  // Current provider models list (from configured server provider)
+  const [currentModels, setCurrentModels] = useState<ModelInfo[]>([]);
+  const [currentModelId, setCurrentModelId] = useState('');
+  const [loadingCurrentModels, setLoadingCurrentModels] = useState(true);
+  const [embeddingModelId, setEmbeddingModelId] = useState(DEFAULT_EMBEDDING_MODEL);
   const [status, setStatus] = useState<{ configured: boolean; provider?: string | null; model?: string | null } | null>(null);
+  const [switchingModel, setSwitchingModel] = useState(false);
+  const [switchMsg, setSwitchMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Add provider form
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [providerType, setProviderType] = useState<ProviderType>('vngcloud');
+  const [addBaseUrl, setAddBaseUrl] = useState('');
+  const [addApiKey, setAddApiKey] = useState('');
+  const [showAddApiKey, setShowAddApiKey] = useState(false);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<ModelInfo[]>([]);
+  const [fetchMsg, setFetchMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [addSelectedModel, setAddSelectedModel] = useState('');
+  const [addTools, setAddTools] = useState(true);
+  const [addVision, setAddVision] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const [addEmbedding, setAddEmbedding] = useState('');
   const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [addMsg, setAddMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    getAgentServiceConfig().then(({ url }) => {
-      fetchModels(url).then(list => {
-        setModels(list);
-        chrome.storage.sync.get(['agentProviderConfig'], r => {
-          const saved = r.agentProviderConfig;
-          const id = saved?.modelId || saved?.model;
-          const match = list.find(m => m.id === id);
-          const def = list.find(m => m.default) ?? list[0];
-          if (saved?.apiKey) setApiKey(saved.apiKey);
-          if (saved?.embeddingModel) setEmbeddingModelId(saved.embeddingModel);
-          if (match) {
-            setSelectedId(match.id);
-          } else if (id) {
-            // saved id not in catalog → restore as custom
-            setSelectedId(CUSTOM_ID);
-            setCustomModelId(id);
-            setCustomBaseUrl(saved?.baseUrl ?? '');
-            setCustomTools(saved?.toolsSupported ?? true);
-            setCustomVision(saved?.visionSupported ?? false);
-            const p = saved?.provider;
-            if (p === 'anthropic' || p === 'openai' || p === 'openai-compat') setCustomProviderType(p);
-          } else {
-            setSelectedId(def?.id ?? '');
-          }
-        });
-      });
+    getAgentServiceConfig().then(async ({ url }) => {
       checkAgentServiceHealthFull(url).then(h => { if (h?.provider) setStatus(h.provider); });
+
+      // Load server config to seed chrome.storage if not yet saved (covers VNGCLOUD env-only setup)
+      const [serverCfg, list] = await Promise.all([
+        fetchProviderConfig(url),
+        listModelsForConfiguredProvider(url),
+      ]);
+      setCurrentModels(list);
+      setLoadingCurrentModels(false);
+
+      chrome.storage.sync.get(['agentProviderConfig'], r => {
+        const saved = r.agentProviderConfig ?? {};
+        const savedId = saved.modelId || saved.model;
+        if (saved.embeddingModel) setEmbeddingModelId(saved.embeddingModel);
+
+        // If storage has no baseUrl but server has one (e.g. from VNGCLOUD env), seed it
+        if (serverCfg && !saved.baseUrl && serverCfg.baseUrl) {
+          const merged = { ...saved, baseUrl: serverCfg.baseUrl, provider: serverCfg.provider ?? saved.provider };
+          chrome.storage.sync.set({ agentProviderConfig: merged });
+        }
+
+        const match = list.find(m => m.id === savedId) ?? list.find(m => m.id === serverCfg?.model);
+        setCurrentModelId(match?.id ?? list[0]?.id ?? savedId ?? serverCfg?.model ?? '');
+      });
     });
+
+    // Sync model selection when chat changes it
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (changes.agentProviderConfig) {
+        const cfg = changes.agentProviderConfig.newValue;
+        if (cfg?.modelId || cfg?.model) setCurrentModelId(cfg.modelId || cfg.model);
+        if (cfg?.embeddingModel) setEmbeddingModelId(cfg.embeddingModel);
+      }
+    };
+    chrome.storage.sync.onChanged.addListener(onChanged);
+    return () => chrome.storage.sync.onChanged.removeListener(onChanged);
   }, []);
 
-  const isCustom = selectedId === CUSTOM_ID;
+  // Pre-fill baseUrl when switching provider type
+  useEffect(() => {
+    const preset = PROVIDER_PRESETS[providerType];
+    if (preset.baseUrl) setAddBaseUrl(preset.baseUrl);
+    else if (providerType !== 'openai-compat') setAddBaseUrl('');
+    setFetchedModels([]);
+    setFetchMsg(null);
+    setAddSelectedModel('');
+  }, [providerType]);
 
-  const autoDetect = async () => {
-    if (!apiKey.trim()) { setMsg({ type: 'error', text: 'Nhập API key trước khi auto-detect' }); return; }
-    setDetecting(true);
-    setMsg(null);
+  const resolvedBaseUrl = addBaseUrl.trim() || PROVIDER_PRESETS[providerType].baseUrl;
+
+  const handleFetchModels = async () => {
+    setFetchingModels(true); setFetchMsg(null); setFetchedModels([]);
     try {
       const { url } = await getAgentServiceConfig();
-      let provider: string, modelId: string, baseUrl: string | undefined;
-      if (isCustom) {
-        if (!customModelId.trim()) { setMsg({ type: 'error', text: 'Nhập Model ID trước khi auto-detect' }); return; }
-        provider = customProviderType;
-        modelId = customModelId.trim();
-        baseUrl = customProviderType === 'openai-compat' ? (customBaseUrl.trim() || undefined) : undefined;
-      } else {
-        const m = models.find(x => x.id === selectedId);
-        if (!m) { setMsg({ type: 'error', text: 'Chọn model trước' }); return; }
-        provider = m.provider;
-        modelId = m.id;
-        baseUrl = m.baseUrl;
-      }
-      const result = await detectProviderCapabilities(url, provider, apiKey.trim(), modelId, baseUrl);
-      if (result.error && !isCustom) {
-        setMsg({ type: 'error', text: `❌ Detect lỗi: ${result.error}` });
-      } else {
-        if (isCustom) {
-          setCustomTools(result.toolsSupported);
-          setCustomVision(result.visionSupported);
-        }
-        setMsg({
-          type: 'success',
-          text: `✅ Tools: ${result.toolsSupported ? 'có' : 'không'} · Vision: ${result.visionSupported ? 'có' : 'không'}${result.error ? ` (${result.error})` : ''}`,
-        });
-      }
+      const prov = providerType === 'anthropic' ? 'anthropic' : providerType;
+      const list = await listModelsFromProvider(url, resolvedBaseUrl, addApiKey.trim() || undefined, prov);
+      if (list.length === 0) { setFetchMsg({ type: 'error', text: 'Provider không trả về model nào' }); }
+      else { setFetchedModels(list); setAddSelectedModel(prev => prev || list[0].id); setFetchMsg({ type: 'success', text: `✅ ${list.length} models` }); }
+    } catch (err) {
+      setFetchMsg({ type: 'error', text: `❌ ${err instanceof Error ? err.message : 'Lỗi kết nối'}` });
+    } finally { setFetchingModels(false); }
+  };
+
+  const autoDetect = async () => {
+    if (!addSelectedModel.trim()) { setAddMsg({ type: 'error', text: 'Chọn model trước' }); return; }
+    setDetecting(true); setAddMsg(null);
+    try {
+      const { url } = await getAgentServiceConfig();
+      const prov = providerType === 'anthropic' ? 'anthropic' : providerType;
+      const result = await detectProviderCapabilities(url, prov, addApiKey.trim(), addSelectedModel.trim(), resolvedBaseUrl || undefined);
+      setAddTools(result.toolsSupported); setAddVision(result.visionSupported);
+      setAddMsg({ type: 'success', text: `✅ Tools: ${result.toolsSupported ? 'có' : 'không'} · Vision: ${result.visionSupported ? 'có' : 'không'}` });
     } finally { setDetecting(false); }
   };
 
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMsg(null);
-    if (!apiKey.trim()) { setMsg({ type: 'error', text: 'API key là bắt buộc' }); return; }
-
-    let provider: string, modelId: string, baseUrl: string | undefined, tools: boolean, vision: boolean;
-    if (isCustom) {
-      if (!customModelId.trim()) { setMsg({ type: 'error', text: 'Model ID là bắt buộc với Custom' }); return; }
-      provider = customProviderType;
-      modelId = customModelId.trim();
-      baseUrl = customProviderType === 'openai-compat' ? (customBaseUrl.trim() || undefined) : undefined;
-      tools = (customProviderType === 'anthropic' || customProviderType === 'openai') ? true : customTools;
-      vision = (customProviderType === 'anthropic' || customProviderType === 'openai') ? true : customVision;
-    } else {
-      const m = models.find(x => x.id === selectedId);
-      if (!m) { setMsg({ type: 'error', text: 'Chọn model trước' }); return; }
-      provider = m.provider;
-      modelId = m.id;
-      baseUrl = m.baseUrl;
-      tools = m.toolsSupported;
-      vision = m.visionSupported;
-    }
+  const saveProvider = async (e: React.FormEvent) => {
+    e.preventDefault(); setAddMsg(null);
+    const modelId = addSelectedModel.trim();
+    if (!modelId) { setAddMsg({ type: 'error', text: 'Chọn hoặc nhập Model ID' }); return; }
+    if (!addApiKey.trim()) { setAddMsg({ type: 'error', text: 'API key là bắt buộc' }); return; }
+    const prov = providerType === 'anthropic' ? 'anthropic'
+      : providerType === 'openai' ? 'openai'
+      : providerType;  // vngcloud, gemini, openai-compat — keep as-is, server handles them
+    const baseUrl = prov !== 'anthropic' ? (resolvedBaseUrl || undefined) : undefined;
+    const tools = prov === 'anthropic' || prov === 'openai' ? true : addTools;
+    const vision = prov === 'anthropic' || prov === 'openai' ? true : addVision;
+    const embModel = addEmbedding.trim() || undefined;
 
     setSaving(true);
     try {
       const { url } = await getAgentServiceConfig();
-      chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async r => {
-        const cfg = r?.config;
-        if (cfg?.nativeServerUrl) await pushNativeConfigToAgentService(url, cfg.nativeServerUrl, cfg.authToken);
-      });
-      const embModel = embeddingModelId.trim() || undefined;
-      const ok = await pushProviderConfig(url, provider, apiKey.trim(), modelId, baseUrl, tools, vision, embModel);
-      if (!ok) { setMsg({ type: 'error', text: 'Agent service không phản hồi' }); return; }
-      chrome.storage.sync.set({ agentProviderConfig: { modelId, provider, apiKey: apiKey.trim(), model: modelId, baseUrl: baseUrl ?? '', toolsSupported: tools, visionSupported: vision, embeddingModel: embModel } });
-      setStatus({ configured: true, provider, model: modelId });
-      setMsg({ type: 'success', text: '✅ Provider đã cập nhật!' });
+      const ok = await pushProviderConfig(url, prov, addApiKey.trim(), modelId, baseUrl, tools, vision, embModel);
+      if (!ok) { setAddMsg({ type: 'error', text: '❌ Agent service không phản hồi' }); return; }
+      chrome.storage.sync.set({ agentProviderConfig: { modelId, model: modelId, provider: prov, apiKey: addApiKey.trim(), baseUrl: baseUrl ?? '', toolsSupported: tools, visionSupported: vision, embeddingModel: embModel } });
+      setStatus({ configured: true, provider: prov, model: modelId });
+      // Refresh current models list from new provider
+      setLoadingCurrentModels(true);
+      const list = await listModelsForConfiguredProvider(url);
+      setCurrentModels(list);
+      setCurrentModelId(modelId);
+      setLoadingCurrentModels(false);
+      setShowAddForm(false);
+      setAddMsg(null);
     } finally { setSaving(false); }
   };
 
-  const selected = models.find(m => m.id === selectedId);
-  const categories = Array.from(new Set(models.map(m => m.category)));
+  const saveModelSwitch = async () => {
+    if (!currentModelId) return;
+    setSwitchingModel(true); setSwitchMsg(null);
+    const { url } = await getAgentServiceConfig();
+    const embModel = embeddingModelId.trim() || undefined;
+    // Read full saved config and just swap model
+    chrome.storage.sync.get(['agentProviderConfig'], async r => {
+      const saved = r.agentProviderConfig ?? {};
+      let provider = saved.provider || 'vngcloud';
+      if (provider === 'openai-compat' && typeof saved.baseUrl === 'string' && saved.baseUrl.includes('vngcloud')) provider = 'vngcloud';
+      const ok = await pushProviderConfig(url, provider, saved.apiKey || '', currentModelId, saved.baseUrl || undefined, saved.toolsSupported ?? false, saved.visionSupported ?? false, embModel);
+      if (ok) {
+        chrome.storage.sync.set({ agentProviderConfig: { ...saved, modelId: currentModelId, model: currentModelId, embeddingModel: embModel } });
+        setStatus(s => s ? { ...s, model: currentModelId } : s);
+        setSwitchMsg({ type: 'success', text: '✅ Đã cập nhật model' });
+      } else {
+        setSwitchMsg({ type: 'error', text: '❌ Không thể kết nối agent-service' });
+      }
+      setSwitchingModel(false);
+    });
+  };
 
   return (
     <div style={{ maxWidth: 560 }}>
       <SectionTitle>LLM Provider</SectionTitle>
 
+      {/* Current provider status */}
       {status && (
         <div style={{
           padding: '10px 14px', borderRadius: 10, fontSize: 13, marginBottom: 20,
           background: status.configured ? 'rgba(16,185,129,0.07)' : 'rgba(239,68,68,0.07)',
           border: `1px solid ${status.configured ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)'}`,
-          color: status.configured ? '#10b981' : '#ef4444',
+          color: status.configured ? 'var(--success, #10b981)' : 'var(--error, #ef4444)',
         }}>
-          {status.configured ? `✓ Active: ${status.model || status.provider}` : '⚠️ Chưa cấu hình provider'}
+          {status.configured ? `✓ Provider: ${PROVIDER_LABEL[status.provider ?? ''] ?? status.provider}` : '⚠️ Chưa cấu hình provider'}
         </div>
       )}
 
-      <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Model selector */}
-        <div>
-          <Label>Model</Label>
-          <select value={selectedId} onChange={e => setSelectedId(e.target.value)} style={{ ...inputStyle }}>
-            {categories.map(cat => (
-              <optgroup key={cat} label={cat}>
-                {models.filter(m => m.category === cat).map(m => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </optgroup>
-            ))}
-            <optgroup label="Custom">
-              <option value={CUSTOM_ID}>Custom (OpenAI-compatible)</option>
-            </optgroup>
-          </select>
-          {selected && !isCustom && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-              <CapBadge label="Tools" active={selected.toolsSupported} />
-              <CapBadge label="Vision" active={selected.visionSupported} />
-              {selected.baseUrl && <span style={{ fontSize: 11, color: '#9ca3af', marginLeft: 2 }}>{selected.baseUrl}</span>}
-            </div>
-          )}
-        </div>
-
-        {/* Custom fields */}
-        {isCustom && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 16px', borderRadius: 10, background: '#f8f9fa', border: '1px solid #e5e7eb' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#374151' }}>Custom provider config</div>
-
-            {/* Provider type */}
-            <div>
-              <Label>Provider type</Label>
-              <div style={{ display: 'flex', gap: 6 }}>
-                {(['openai-compat', 'anthropic', 'openai'] as const).map(p => (
-                  <button
-                    key={p} type="button"
-                    onClick={() => setCustomProviderType(p)}
-                    style={{
-                      padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: 'pointer',
-                      background: customProviderType === p ? '#4f46e5' : 'transparent',
-                      color: customProviderType === p ? '#fff' : '#4f46e5',
-                      border: '1px solid #4f46e5',
-                    }}
-                  >{p}</button>
-                ))}
+      {/* Model selector for current provider */}
+      {!loadingCurrentModels && currentModels.length > 0 && (() => {
+        const chatModels = currentModels.filter(m => isChatModel(m) && isEnabled(m));
+        const embeddingModels = currentModels.filter(m => isEmbeddingModel(m) && isEnabled(m));
+        return (
+          <div style={{ ...formCardStyle, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Model đang dùng</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <select value={currentModelId} onChange={e => setCurrentModelId(e.target.value)} style={inputStyle}>
+                  {chatModels.length > 0
+                    ? chatModels.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.id}{m.model_type ? ` [${MODEL_TYPE_LABEL[m.model_type] ?? m.model_type}]` : ''}
+                        </option>
+                      ))
+                    : currentModels.filter(isEnabled).map(m => <option key={m.id} value={m.id}>{m.id}</option>)
+                  }
+                </select>
               </div>
+              <button type="button" onClick={saveModelSwitch} disabled={switchingModel} style={{ ...btnStyle, flexShrink: 0 }}>
+                {switchingModel ? 'Đang lưu…' : 'Apply'}
+              </button>
             </div>
-
-            {/* Base URL — only for openai-compat */}
-            {customProviderType === 'openai-compat' && (
-              <div>
-                <Label>Base URL</Label>
-                <input
-                  style={inputStyle} type="url" value={customBaseUrl}
-                  onChange={e => setCustomBaseUrl(e.target.value)}
-                  placeholder="https://api.example.com/v1"
-                />
-                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
-                  URL gốc của API (OpenAI-compatible). Ví dụ: OpenRouter, LiteLLM, Ollama, VNGCloud…
+            {/* Show selected model's type badge */}
+            {currentModelId && (() => {
+              const sel = currentModels.find(m => m.id === currentModelId);
+              return sel?.model_type ? (
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
+                  Loại: <ModelTypeBadge type={sel.model_type} />
                 </div>
-              </div>
-            )}
+              ) : null;
+            })()}
+            <Msg msg={switchMsg} />
 
-            {/* Model ID */}
+            <div style={{ marginTop: 14 }}>
+              <Label>Embedding Model <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></Label>
+              {embeddingModels.length > 0 ? (
+                <select value={embeddingModelId} onChange={e => setEmbeddingModelId(e.target.value)} style={inputStyle}>
+                  <option value="">— Không dùng —</option>
+                  {embeddingModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+                </select>
+              ) : (
+                <input style={inputStyle} value={embeddingModelId} onChange={e => setEmbeddingModelId(e.target.value)} placeholder={DEFAULT_EMBEDDING_MODEL} />
+              )}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Dùng cho long-term memory.</div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {loadingCurrentModels && status?.configured && (
+        <div style={{ color: 'var(--text-muted)', fontSize: 12, marginBottom: 16 }}>Đang tải danh sách model…</div>
+      )}
+
+      {/* Add / Change Provider */}
+      <div style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          onClick={() => setShowAddForm(v => !v)}
+          style={{ ...btnSecStyle, fontSize: 12, padding: '7px 16px' }}
+        >
+          {showAddForm ? '✕ Đóng' : (status?.configured ? '↺ Đổi Provider' : '+ Thêm Provider')}
+        </button>
+      </div>
+
+      {showAddForm && (
+        <form onSubmit={saveProvider} style={{ ...formCardStyle, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Cấu hình Provider</div>
+
+          {/* Provider type selector */}
+          <div>
+            <Label>Provider</Label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {(Object.keys(PROVIDER_PRESETS) as ProviderType[]).map(p => (
+                <button
+                  key={p} type="button"
+                  onClick={() => setProviderType(p)}
+                  style={{
+                    padding: '6px 14px', borderRadius: 20, fontSize: 12, fontWeight: 500, cursor: 'pointer',
+                    background: providerType === p ? 'var(--accent)' : 'transparent',
+                    color: providerType === p ? '#fff' : 'var(--accent)',
+                    border: '1px solid var(--accent)',
+                  }}
+                >{PROVIDER_PRESETS[p].label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Base URL — hide for pure Anthropic */}
+          {providerType !== 'anthropic' && (
             <div>
-              <Label>Model ID</Label>
+              <Label>Base URL</Label>
               <input
-                style={inputStyle} value={customModelId}
-                onChange={e => setCustomModelId(e.target.value)}
-                placeholder={
-                  customProviderType === 'anthropic' ? 'claude-opus-4-8 / claude-sonnet-4-6…'
-                  : customProviderType === 'openai' ? 'gpt-4o / gpt-5…'
-                  : 'qwen3-70b / mistral-large / llama-3.3…'
-                }
+                style={inputStyle}
+                value={addBaseUrl}
+                onChange={e => { setAddBaseUrl(e.target.value); setFetchedModels([]); setFetchMsg(null); }}
+                placeholder={PROVIDER_PRESETS[providerType].baseUrl || 'https://api.example.com/v1'}
               />
             </div>
+          )}
 
-            {/* Tools + Vision — only relevant for openai-compat */}
-            {customProviderType === 'openai-compat' && (
-              <div>
-                <Label>Capabilities</Label>
-                <div style={{ display: 'flex', gap: 16 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 13 }}>
-                    <input type="checkbox" checked={customTools} onChange={e => setCustomTools(e.target.checked)} />
-                    <span>Tool calls</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 13 }}>
-                    <input type="checkbox" checked={customVision} onChange={e => setCustomVision(e.target.checked)} />
-                    <span>Vision (image input)</span>
-                  </label>
-                </div>
-                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6 }}>
-                  Không chắc? Dùng <strong>🔍 Auto-detect</strong> bên dưới sau khi nhập API key.
-                </div>
-              </div>
+          {/* API Key */}
+          <div>
+            <Label>API Key</Label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                style={{ ...inputStyle, flex: 1 }}
+                type={showAddApiKey ? 'text' : 'password'}
+                value={addApiKey}
+                onChange={e => setAddApiKey(e.target.value)}
+                placeholder={PROVIDER_PRESETS[providerType].placeholder}
+                autoComplete="off"
+              />
+              <button type="button" onClick={() => setShowAddApiKey(v => !v)}
+                style={{ ...btnSecStyle, flexShrink: 0, padding: '8px 12px', fontSize: 12 }}>
+                {showAddApiKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+          </div>
+
+          {/* Model picker */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <Label style={{ margin: 0, flex: 1 }}>Model</Label>
+              <button
+                type="button"
+                onClick={handleFetchModels}
+                disabled={fetchingModels || !addApiKey.trim()}
+                style={{ ...btnSecStyle, fontSize: 12, padding: '5px 12px' }}
+              >
+                {fetchingModels ? '⏳ Đang tải…' : '🔍 Fetch Models'}
+              </button>
+            </div>
+            <Msg msg={fetchMsg} />
+            {fetchedModels.length > 0 ? (
+              <select value={addSelectedModel} onChange={e => setAddSelectedModel(e.target.value)} style={{ ...inputStyle, marginTop: 6 }}>
+                {fetchedModels.filter(m => isChatModel(m) && isEnabled(m)).map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.id}{m.model_type ? ` [${MODEL_TYPE_LABEL[m.model_type] ?? m.model_type}]` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                style={{ ...inputStyle, marginTop: fetchMsg ? 6 : 0 }}
+                value={addSelectedModel}
+                onChange={e => setAddSelectedModel(e.target.value)}
+                placeholder="Nhập Model ID hoặc Fetch Models để chọn"
+              />
             )}
           </div>
-        )}
 
-        {/* API Key */}
-        <div>
-          <Label>API Key</Label>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              style={{ ...inputStyle, flex: 1 }}
-              type={showApiKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              placeholder="your-api-key"
-              autoComplete="off"
-            />
-            <button
-              type="button"
-              onClick={() => setShowApiKey(v => !v)}
-              style={{ ...btnSecStyle, flexShrink: 0, padding: '8px 12px', fontSize: 12 }}
-            >
-              {showApiKey ? 'Hide' : 'Show'}
+          {/* Capabilities — only relevant for openai-compat */}
+          {(providerType === 'openai-compat') && (
+            <div>
+              <Label>Capabilities</Label>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                  <input type="checkbox" checked={addTools} onChange={e => setAddTools(e.target.checked)} /><span>Tool calls</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                  <input type="checkbox" checked={addVision} onChange={e => setAddVision(e.target.checked)} /><span>Vision</span>
+                </label>
+                <button type="button" onClick={autoDetect} disabled={detecting || !addSelectedModel.trim()} style={{ ...btnSecStyle, fontSize: 11, padding: '3px 10px' }}>
+                  {detecting ? '⏳' : '🔍 Auto-detect'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Embedding model */}
+          <div>
+            <Label>Embedding Model <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span></Label>
+            {fetchedModels.length > 0 ? (() => {
+              const embModels = fetchedModels.filter(m => isEmbeddingModel(m) && isEnabled(m));
+              return embModels.length > 0 ? (
+                <select value={addEmbedding} onChange={e => setAddEmbedding(e.target.value)} style={inputStyle}>
+                  <option value="">— Không dùng —</option>
+                  {embModels.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+                </select>
+              ) : (
+                <input style={inputStyle} value={addEmbedding} onChange={e => setAddEmbedding(e.target.value)} placeholder={DEFAULT_EMBEDDING_MODEL} />
+              );
+            })() : (
+              <input style={inputStyle} value={addEmbedding} onChange={e => setAddEmbedding(e.target.value)} placeholder={DEFAULT_EMBEDDING_MODEL} />
+            )}
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Dùng cho long-term memory.</div>
+          </div>
+
+          <Msg msg={addMsg} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="submit" disabled={saving || !addApiKey.trim() || !addSelectedModel.trim()} style={btnStyle}>
+              {saving ? 'Đang lưu…' : '💾 Save Provider'}
             </button>
+            <button type="button" onClick={() => { setShowAddForm(false); setAddMsg(null); }} style={btnSecStyle}>Huỷ</button>
           </div>
-        </div>
-
-        {/* Embedding Model */}
-        <div>
-          <Label>Embedding Model <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional — dùng cho long-term memory)</span></Label>
-          <input
-            style={inputStyle}
-            value={embeddingModelId}
-            onChange={e => setEmbeddingModelId(e.target.value)}
-            placeholder={
-              selectedId === CUSTOM_ID && customProviderType === 'openai-compat'
-                ? 'qwen/qwen3-embedding-8b'
-                : 'text-embedding-3-small'
-            }
-          />
-          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
-            Để trống nếu không cần memory. VNGCloud: <code>qwen/qwen3-embedding-8b</code>
-          </div>
-        </div>
-
-        <Msg msg={msg} />
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="submit" disabled={saving || !apiKey.trim()} style={btnStyle}>
-            {saving ? 'Đang lưu…' : '💾 Save Provider'}
-          </button>
-          <button
-            type="button"
-            onClick={autoDetect}
-            disabled={detecting || !apiKey.trim()}
-            style={{ ...btnSecStyle, fontSize: 12 }}
-            title="Tự động kiểm tra model có hỗ trợ tool calls và vision không"
-          >
-            {detecting ? '⏳ Đang kiểm tra…' : '🔍 Auto-detect capabilities'}
-          </button>
-        </div>
-      </form>
+        </form>
+      )}
     </div>
   );
 }
@@ -497,20 +609,20 @@ function SkillRow({ icon, name, subtitle, disabled, onToggle, onDelete }: {
   disabled: boolean; onToggle: () => void; onDelete?: () => void;
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid #e5e7eb' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
       <span style={{ fontSize: 18, width: 24, textAlign: 'center', flexShrink: 0 }}>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: disabled ? '#9ca3af' : '#1a1a2e' }}>{name}</div>
-        <div style={{ fontSize: 11, color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</div>
+        <div style={{ fontSize: 13, fontWeight: 500, color: disabled ? 'var(--text-muted)' : 'var(--text-primary)' }}>{name}</div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitle}</div>
       </div>
       <button onClick={onToggle} style={{
         flexShrink: 0, fontSize: 11, padding: '4px 10px', borderRadius: 20, cursor: 'pointer', fontWeight: 600,
         background: disabled ? 'transparent' : 'rgba(16,185,129,0.1)',
-        border: `1px solid ${disabled ? '#e5e7eb' : 'rgba(16,185,129,0.3)'}`,
-        color: disabled ? '#9ca3af' : '#10b981',
+        border: `1px solid ${disabled ? 'var(--border)' : 'rgba(16,185,129,0.3)'}`,
+        color: disabled ? 'var(--text-muted)' : 'var(--success, #10b981)',
       }}>{disabled ? 'Off' : 'On'}</button>
       {onDelete && (
-        <button onClick={onDelete} title="Xoá" style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 6, border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#9ca3af', fontSize: 13 }}>✕</button>
+        <button onClick={onDelete} title="Xoá" style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13 }}>✕</button>
       )}
     </div>
   );
@@ -522,12 +634,10 @@ function SkillsTab() {
   const [disabled, setDisabled] = useState<string[]>([]);
   const [mode, setMode] = useState<SkillFormMode>('none');
 
-  // URL form
   const [skillUrl, setSkillUrl] = useState('');
   const [fetching, setFetching] = useState(false);
   const [urlMsg, setUrlMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Create form
   const [form, setForm] = useState({ name: '', description: '', icon: '🔧', category: 'custom', instructions: '' });
   const [createMsg, setCreateMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -598,20 +708,15 @@ function SkillsTab() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <SectionTitle>Agent Skills</SectionTitle>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={() => setMode(mode === 'url' ? 'none' : 'url')} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }}>
-            + Từ URL
-          </button>
-          <button onClick={() => setMode(mode === 'create' ? 'none' : 'create')} style={{ ...btnStyle, fontSize: 12, padding: '6px 12px' }}>
-            + Tạo mới
-          </button>
+          <button onClick={() => setMode(mode === 'url' ? 'none' : 'url')} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }}>+ Từ URL</button>
+          <button onClick={() => setMode(mode === 'create' ? 'none' : 'create')} style={{ ...btnStyle, fontSize: 12, padding: '6px 12px' }}>+ Tạo mới</button>
         </div>
       </div>
 
-      {/* Add from URL form */}
       {mode === 'url' && (
-        <div style={{ background: '#f8f9fa', border: '1px solid #e5e7eb', borderRadius: 10, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Thêm skill từ URL</div>
-          <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 10, lineHeight: 1.6 }}>
+        <div style={formCardStyle}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: 'var(--text-primary)' }}>Thêm skill từ URL</div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.6 }}>
             Hỗ trợ: <strong>skills.sh</strong> URL, GitHub directory, hoặc raw link đến <code>SKILL.md</code>.
             Tự động fetch cả thư mục <code>references/</code> nếu có.
           </p>
@@ -633,10 +738,9 @@ function SkillsTab() {
         </div>
       )}
 
-      {/* Create manual form */}
       {mode === 'create' && (
-        <div style={{ background: '#f8f9fa', border: '1px solid #e5e7eb', borderRadius: 10, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Tạo skill mới</div>
+        <div style={formCardStyle}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>Tạo skill mới</div>
           <form onSubmit={createManual} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '48px 1fr', gap: 8 }}>
               <div>
@@ -682,10 +786,9 @@ function SkillsTab() {
         </div>
       )}
 
-      {/* Built-in skills */}
       {builtins.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Built-in</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Built-in</div>
           {builtins.map(s => (
             <SkillRow key={s.id} icon={s.icon} name={s.name} subtitle={s.description}
               disabled={disabled.includes(s.id)} onToggle={() => toggle(s.id)} />
@@ -693,10 +796,9 @@ function SkillsTab() {
         </div>
       )}
 
-      {/* Custom skills */}
       {customs.length > 0 && (
         <div>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Custom</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Custom</div>
           {customs.map(s => (
             <div key={s.id}>
               <SkillRow
@@ -717,7 +819,7 @@ function SkillsTab() {
       )}
 
       {builtins.length === 0 && customs.length === 0 && (
-        <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 13, padding: '40px 0' }}>
+        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: '40px 0' }}>
           Chưa có skill nào. Thêm từ URL hoặc tạo mới.
         </div>
       )}
@@ -732,10 +834,10 @@ type AddMode = 'none' | 'paste' | 'manual';
 
 function StatusBadge({ status }: { status: McpStatus }) {
   const map: Record<McpStatus, { bg: string; color: string; border: string; label: string }> = {
-    idle:    { bg: 'rgba(156,163,175,0.1)', color: '#9ca3af', border: 'rgba(156,163,175,0.2)', label: '—' },
+    idle:    { bg: 'rgba(156,163,175,0.1)', color: 'var(--text-muted)', border: 'rgba(156,163,175,0.2)', label: '—' },
     testing: { bg: 'rgba(245,158,11,0.1)',  color: '#f59e0b', border: 'rgba(245,158,11,0.25)', label: 'Testing…' },
-    ok:      { bg: 'rgba(16,185,129,0.1)',  color: '#10b981', border: 'rgba(16,185,129,0.25)', label: 'Connected' },
-    error:   { bg: 'rgba(239,68,68,0.07)',  color: '#ef4444', border: 'rgba(239,68,68,0.25)', label: 'Error' },
+    ok:      { bg: 'rgba(16,185,129,0.1)',  color: 'var(--success, #10b981)', border: 'rgba(16,185,129,0.25)', label: 'Connected' },
+    error:   { bg: 'rgba(239,68,68,0.07)',  color: 'var(--error, #ef4444)', border: 'rgba(239,68,68,0.25)', label: 'Error' },
   };
   const s = map[status];
   return (
@@ -751,7 +853,7 @@ function TypeBadge({ type }: { type: string }) {
     <span style={{
       fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 6,
       background: isStdio ? 'rgba(245,158,11,0.1)' : 'rgba(79,70,229,0.08)',
-      color: isStdio ? '#d97706' : '#4f46e5',
+      color: isStdio ? '#d97706' : 'var(--accent)',
       border: `1px solid ${isStdio ? 'rgba(245,158,11,0.3)' : 'rgba(79,70,229,0.2)'}`,
     }}>
       {type}
@@ -789,7 +891,7 @@ function HeadersEditor({ headers, onChange }: {
             value={v} placeholder="value or ${input:var}"
             onChange={e => update(i, k, e.target.value)}
           />
-          <button type="button" onClick={() => remove(i)} style={{ flexShrink: 0, width: 28, height: 34, borderRadius: 6, border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#9ca3af', fontSize: 13 }}>✕</button>
+          <button type="button" onClick={() => remove(i)} style={{ flexShrink: 0, width: 28, height: 34, borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13 }}>✕</button>
         </div>
       ))}
       <button type="button" onClick={add} style={{ ...btnSecStyle, fontSize: 11, padding: '4px 10px' }}>+ Add header</button>
@@ -906,15 +1008,14 @@ function McpTab() {
           )}
         </div>
       </div>
-      <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 20, lineHeight: 1.6 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
         Kết nối thêm MCP server ngoài native-server. Hỗ trợ format JSON của Cursor/Claude/VS Code.
       </p>
 
-      {/* Paste JSON */}
       {addMode === 'paste' && (
-        <div style={{ background: '#f8f9fa', border: '1px solid #e5e7eb', borderRadius: 10, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Paste MCP config JSON</div>
-          <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 10, lineHeight: 1.6 }}>
+        <div style={formCardStyle}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>Paste MCP config JSON</div>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.6 }}>
             Hỗ trợ format <code>mcpServers</code> của Cursor/Claude, hoặc paste trực tiếp một server object.
           </p>
           <textarea
@@ -924,19 +1025,19 @@ function McpTab() {
             placeholder={`// Ví dụ — paste từ Cursor/Claude config:\n{\n  "n8n-mcp": {\n    "type": "http",\n    "url": "https://example.com/mcp",\n    "headers": {\n      "Authorization": "Bearer your-token"\n    }\n  }\n}`}
             style={{ ...inputStyle, resize: 'vertical', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.5 }}
           />
-          {pasteError && <div style={{ color: '#ef4444', fontSize: 12, marginTop: 6 }}>⚠️ {pasteError}</div>}
+          {pasteError && <div style={{ color: 'var(--error, #ef4444)', fontSize: 12, marginTop: 6 }}>⚠️ {pasteError}</div>}
           {parsedPaste.length > 0 && (
             <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
                 Sẽ thêm {parsedPaste.length} server:
               </div>
               {parsedPaste.map((p, i) => (
-                <div key={i} style={{ padding: '8px 12px', borderRadius: 8, background: '#fff', border: '1px solid #e5e7eb', marginBottom: 6, fontSize: 12 }}>
+                <div key={i} style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)', marginBottom: 6, fontSize: 12, color: 'var(--text-primary)' }}>
                   <span style={{ fontWeight: 600 }}>{p.name || '(unnamed)'}</span>
                   {' '}<TypeBadge type={p.type} />
-                  {p.url && <span style={{ color: '#9ca3af', marginLeft: 8 }}>{p.url}</span>}
+                  {p.url && <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>{p.url}</span>}
                   {p.headers && Object.keys(p.headers).length > 0 && (
-                    <span style={{ color: '#9ca3af', marginLeft: 8 }}>🔑 {Object.keys(p.headers).join(', ')}</span>
+                    <span style={{ color: 'var(--text-muted)', marginLeft: 8 }}>🔑 {Object.keys(p.headers).join(', ')}</span>
                   )}
                 </div>
               ))}
@@ -946,10 +1047,9 @@ function McpTab() {
         </div>
       )}
 
-      {/* Manual form */}
       {addMode === 'manual' && (
-        <div style={{ background: '#f8f9fa', border: '1px solid #e5e7eb', borderRadius: 10, padding: 16, marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Thêm MCP server thủ công</div>
+        <div style={formCardStyle}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>Thêm MCP server thủ công</div>
           <form onSubmit={addManual} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: 8 }}>
               <div>
@@ -998,7 +1098,7 @@ function McpTab() {
       <Msg msg={msg} />
 
       {servers.length === 0 && addMode === 'none' && (
-        <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 13, padding: '40px 0' }}>
+        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: '40px 0' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🔌</div>
           Chưa có external MCP server nào.<br />
           Paste JSON config từ Cursor/Claude hoặc thêm thủ công.
@@ -1008,32 +1108,31 @@ function McpTab() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {servers.map(s => (
           <div key={s.id} style={{
-            padding: '12px 16px', borderRadius: 10, background: '#fff',
-            border: `1px solid ${s.enabled ? '#e5e7eb' : '#f3f4f6'}`,
+            padding: '12px 16px', borderRadius: 10, ...cardStyle,
             opacity: s.enabled ? 1 : 0.65,
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
-              <span style={{ flex: 1, fontWeight: 600, fontSize: 13, color: '#1a1a2e' }}>{s.name}</span>
+              <span style={{ flex: 1, fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>{s.name}</span>
               <TypeBadge type={s.type} />
               <StatusBadge status={statuses[s.id] ?? 'idle'} />
               {s.url && <button onClick={() => testServer(s)} style={{ ...btnSecStyle, fontSize: 11, padding: '3px 10px' }}>Test</button>}
               <button onClick={() => toggle(s.id)} style={{
                 fontSize: 11, padding: '3px 10px', borderRadius: 20, cursor: 'pointer', fontWeight: 600,
                 background: s.enabled ? 'rgba(16,185,129,0.1)' : 'transparent',
-                border: `1px solid ${s.enabled ? 'rgba(16,185,129,0.3)' : '#e5e7eb'}`,
-                color: s.enabled ? '#10b981' : '#9ca3af',
+                border: `1px solid ${s.enabled ? 'rgba(16,185,129,0.3)' : 'var(--border)'}`,
+                color: s.enabled ? 'var(--success, #10b981)' : 'var(--text-muted)',
               }}>{s.enabled ? 'On' : 'Off'}</button>
-              <button onClick={() => remove(s.id)} title="Xoá" style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#9ca3af', fontSize: 13 }}>✕</button>
+              <button onClick={() => remove(s.id)} title="Xoá" style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13 }}>✕</button>
             </div>
-            {s.url && <div style={{ fontSize: 11, color: '#9ca3af', wordBreak: 'break-all' }}>{s.url}</div>}
+            {s.url && <div style={{ fontSize: 11, color: 'var(--text-muted)', wordBreak: 'break-all' }}>{s.url}</div>}
             {s.headers && Object.keys(s.headers).length > 0 && (
-              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 3 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
                 🔑 {Object.keys(s.headers).map(k => <code key={k} style={{ marginRight: 6 }}>{k}</code>)}
               </div>
             )}
-            {s.description && <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{s.description}</div>}
+            {s.description && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{s.description}</div>}
             {testErrors[s.id] && (
-              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 5, padding: '4px 8px', borderRadius: 6, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', wordBreak: 'break-all' }}>
+              <div style={{ fontSize: 11, color: 'var(--error, #ef4444)', marginTop: 5, padding: '4px 8px', borderRadius: 6, background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', wordBreak: 'break-all' }}>
                 ⚠️ {testErrors[s.id]}
               </div>
             )}
@@ -1118,7 +1217,6 @@ function MemoryTab() {
     try {
       const { url } = await getAgentServiceConfig();
       const ok = await pushMemoryConfig(url, maxEntries);
-      // Also persist to extension storage for re-push on startup
       await chrome.storage.sync.set({ memoryMaxEntries: maxEntries });
       setMsg({ type: ok ? 'success' : 'error', text: ok ? '✅ Đã lưu cấu hình memory' : '❌ Lưu thất bại' });
     } finally { setSavingConfig(false); }
@@ -1135,22 +1233,21 @@ function MemoryTab() {
           <button onClick={optimizeMemory} disabled={optimizing || memories.length < 2} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px' }} title="Gộp memories trùng, dọn dẹp entries thừa">
             {optimizing ? '⏳ Optimizing…' : '✨ Optimize Memory'}
           </button>
-          <button onClick={clearAll} disabled={memories.length === 0} style={{ ...btnStyle, fontSize: 12, padding: '6px 12px', background: '#ef4444', borderColor: '#ef4444' }}>🗑 Clear all</button>
+          <button onClick={clearAll} disabled={memories.length === 0} style={{ ...btnStyle, fontSize: 12, padding: '6px 12px', background: 'var(--error, #ef4444)', borderColor: 'var(--error, #ef4444)' }}>🗑 Clear all</button>
         </div>
       </div>
-      <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 16, lineHeight: 1.6 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.6 }}>
         Agent tự động tóm tắt các cuộc hội thoại và lưu vào đây. Memories có nội dung tương tự được gộp lại. Khi bắt đầu chat mới, nội dung liên quan sẽ được inject vào context.
       </p>
 
-      {/* Config row */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 14px', borderRadius: 10, background: '#f9fafb', border: '1px solid #e5e7eb' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, padding: '10px 14px', borderRadius: 10, ...cardStyle }}>
         <Label style={{ margin: 0, whiteSpace: 'nowrap' }}>Max entries</Label>
         <input
           type="number" min={10} max={10000} value={maxEntries}
           onChange={e => setMaxEntries(parseInt(e.target.value) || 200)}
-          style={{ width: 80, padding: '4px 8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+          style={{ width: 80, padding: '4px 8px', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}
         />
-        <span style={{ fontSize: 12, color: '#9ca3af', flex: 1 }}>Entries vượt quá giới hạn sẽ tự động bị xóa (ưu tiên giữ lại entries quan trọng và mới nhất)</span>
+        <span style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1 }}>Entries vượt quá giới hạn sẽ tự động bị xóa (ưu tiên giữ lại entries quan trọng và mới nhất)</span>
         <button onClick={saveConfig} disabled={savingConfig} style={{ ...btnSecStyle, fontSize: 12, padding: '6px 12px', whiteSpace: 'nowrap' }}>
           {savingConfig ? 'Đang lưu…' : 'Lưu'}
         </button>
@@ -1163,9 +1260,9 @@ function MemoryTab() {
             { label: 'With embeddings', value: stats.withEmbeddings },
             { label: 'Keyword-only', value: stats.total - stats.withEmbeddings },
           ].map(s => (
-            <div key={s.label} style={{ padding: '10px 16px', borderRadius: 10, background: '#fff', border: '1px solid #e5e7eb', textAlign: 'center', minWidth: 100 }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: '#4f46e5' }}>{s.value}</div>
-              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{s.label}</div>
+            <div key={s.label} style={{ padding: '10px 16px', borderRadius: 10, ...cardStyle, textAlign: 'center', minWidth: 100 }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--accent)' }}>{s.value}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{s.label}</div>
             </div>
           ))}
         </div>
@@ -1174,21 +1271,21 @@ function MemoryTab() {
       <Msg msg={msg} />
 
       {loading ? (
-        <div style={{ color: '#9ca3af', fontSize: 13, padding: '20px 0' }}>Đang tải…</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '20px 0' }}>Đang tải…</div>
       ) : memories.length === 0 ? (
-        <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 13, padding: '40px 0' }}>
+        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: '40px 0' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🧠</div>
           Chưa có memory nào. Agent sẽ tự động tạo sau khi hoàn thành hội thoại.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {memories.map(m => (
-            <div key={m.id} style={{ padding: '12px 16px', borderRadius: 10, background: '#fff', border: '1px solid #e5e7eb' }}>
+            <div key={m.id} style={{ padding: '12px 16px', borderRadius: 10, ...cardStyle }}>
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                <div style={{ flex: 1, fontSize: 13, color: '#1a1a2e', lineHeight: 1.6 }}>{m.content}</div>
-                <button onClick={() => deleteOne(m.id)} title="Xóa" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 6, border: '1px solid #e5e7eb', background: 'transparent', cursor: 'pointer', color: '#9ca3af', fontSize: 12 }}>✕</button>
+                <div style={{ flex: 1, fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.6 }}>{m.content}</div>
+                <button onClick={() => deleteOne(m.id)} title="Xóa" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 6, border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 12 }}>✕</button>
               </div>
-              <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 6, display: 'flex', gap: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, display: 'flex', gap: 12 }}>
                 <span>🕐 {fmt((m as any).updated_at || m.created_at)}</span>
                 <span style={{ fontFamily: 'monospace' }}>conv: {m.conversation_id.slice(0, 8)}…</span>
                 {(m as any).importance != null && <span>⭐ {((m as any).importance as number).toFixed(2)}</span>}
@@ -1226,7 +1323,7 @@ function SecurityTab() {
     chrome.runtime.sendMessage({ type: 'LIST_TOKENS' }, r => {
       setLoading(false);
       if (r?.success) setTokens(r.tokens ?? []);
-      else setError(r?.error ?? 'Failed to load tokens');
+      else setError(r?.error ?? 'Không thể tải danh sách token');
     });
   };
 
@@ -1262,22 +1359,28 @@ function SecurityTab() {
           {showCreate ? 'Huỷ' : '+ New Token'}
         </button>
       </div>
-      <p style={{ fontSize: 12, color: '#9ca3af', marginBottom: 20, lineHeight: 1.6 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
         Tạo token cho từng MCP client (Cursor, ChatGPT, Claude). Dùng admin token từ native-server để quản lý.
       </p>
 
       {error && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444', fontSize: 12, marginBottom: 16 }}>
-          {error}
-          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', fontSize: 16, lineHeight: 1 }}>×</button>
-        </div>
+        error.includes('chưa được cấu hình') ? (
+          <div style={{ padding: '12px 16px', borderRadius: 8, background: 'rgba(245,158,11,0.07)', border: '1px solid rgba(245,158,11,0.25)', color: 'var(--warning, #f59e0b)', fontSize: 12, marginBottom: 16, lineHeight: 1.6 }}>
+            ⚠️ Native server chưa kết nối. Mở sidepanel và kết nối với agent-service trước.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--error, #ef4444)', fontSize: 12, marginBottom: 16 }}>
+            {error}
+            <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error, #ef4444)', fontSize: 16, lineHeight: 1 }}>×</button>
+          </div>
+        )
       )}
 
       {newToken && (
         <div style={{ padding: 16, borderRadius: 10, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.25)', marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <span style={{ fontWeight: 600, fontSize: 13 }}>✅ Token created: {newToken.name}</span>
-            <button onClick={() => setNewToken(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 16 }}>×</button>
+            <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>✅ Token created: {newToken.name}</span>
+            <button onClick={() => setNewToken(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 16 }}>×</button>
           </div>
           <p style={{ fontSize: 12, color: '#f59e0b', marginBottom: 10 }}>⚠️ Copy token này ngay — sẽ không hiển thị lại.</p>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
@@ -1285,19 +1388,19 @@ function SecurityTab() {
             <button onClick={() => { navigator.clipboard.writeText(newToken.token).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); }} style={{ ...btnStyle, flexShrink: 0 }}>{copied ? 'Copied!' : 'Copy'}</button>
           </div>
           <div>
-            <p style={{ fontSize: 11, color: '#6b7280', marginBottom: 6, fontWeight: 600 }}>Cursor MCP config:</p>
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontWeight: 600 }}>Cursor MCP config:</p>
             <pre style={{ padding: '10px 12px', borderRadius: 7, background: '#1e1e2e', color: '#cdd6f4', fontSize: 11, fontFamily: 'monospace', overflowX: 'auto', whiteSpace: 'pre' }}>{JSON.stringify({ webmcp: { type: 'http', url: 'http://127.0.0.1:18080/mcp', headers: { Authorization: `Bearer ${newToken.token}` } } }, null, 2)}</pre>
           </div>
         </div>
       )}
 
       {showCreate && (
-        <div style={{ padding: 16, borderRadius: 10, background: '#f8f9fa', border: '1px solid #e5e7eb', marginBottom: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Create Token</div>
+        <div style={formCardStyle}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>Create Token</div>
           <div style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
             {PRESET_CLIENTS.map(p => (
               <button key={p.clientId} type="button" onClick={() => { setCreateClientId(p.clientId); setCreateName(p.label); }}
-                style={{ padding: '6px 14px', borderRadius: 20, border: '1px solid', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: createClientId === p.clientId ? '#4f46e5' : 'transparent', color: createClientId === p.clientId ? '#fff' : '#4f46e5', borderColor: '#4f46e5' }}>
+                style={{ padding: '6px 14px', borderRadius: 20, border: '1px solid', cursor: 'pointer', fontSize: 12, fontWeight: 500, background: createClientId === p.clientId ? 'var(--accent)' : 'transparent', color: createClientId === p.clientId ? '#fff' : 'var(--accent)', borderColor: 'var(--accent)' }}>
                 {p.label}
               </button>
             ))}
@@ -1320,28 +1423,28 @@ function SecurityTab() {
       )}
 
       {loading ? (
-        <div style={{ color: '#9ca3af', fontSize: 13, padding: '20px 0' }}>Loading tokens…</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '20px 0' }}>Loading tokens…</div>
       ) : tokens.length === 0 && !showCreate ? (
-        <div style={{ textAlign: 'center', color: '#9ca3af', fontSize: 13, padding: '40px 0' }}>
+        <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13, padding: '40px 0' }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🔑</div>
           Chưa có token nào. Tạo token cho Cursor, ChatGPT hoặc Claude.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {tokens.map(t => (
-            <div key={t.id} style={{ padding: '12px 16px', borderRadius: 10, background: '#fff', border: '1px solid #e5e7eb' }}>
+            <div key={t.id} style={{ padding: '12px 16px', borderRadius: 10, ...cardStyle }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontWeight: 600, fontSize: 13 }}>{t.name}</span>
-                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#f1f3f5', color: '#6b7280' }}>{t.clientId}</span>
+                  <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-primary)' }}>{t.name}</span>
+                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: 'var(--bg-active)', color: 'var(--text-secondary)' }}>{t.clientId}</span>
                 </div>
                 <button onClick={() => handleDelete(t.id, t.name)} disabled={deletingId === t.id}
-                  style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.07)', color: '#ef4444', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
+                  style={{ padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.07)', color: 'var(--error, #ef4444)', cursor: 'pointer', fontSize: 12, fontWeight: 500 }}>
                   {deletingId === t.id ? '…' : 'Revoke'}
                 </button>
               </div>
-              <div style={{ display: 'flex', gap: 16, fontSize: 11, color: '#9ca3af' }}>
-                <code style={{ color: '#6b7280' }}>{t.tokenPrefix}…</code>
+              <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'var(--text-muted)' }}>
+                <code style={{ color: 'var(--text-secondary)' }}>{t.tokenPrefix}…</code>
                 <span>Created: {fmt(t.createdAt)}</span>
                 <span>Last used: {fmt(t.lastUsedAt)}</span>
               </div>
@@ -1359,22 +1462,34 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('general');
 
   return (
-    <div style={{ display: 'flex', width: '100%', minHeight: '100vh', background: '#f8f9fa', fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif", fontSize: 13, color: '#1a1a2e' }}>
+    <div style={{
+      display: 'flex', width: '100%', minHeight: '100vh',
+      background: 'var(--bg-secondary)',
+      fontFamily: "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif",
+      fontSize: 13, color: 'var(--text-primary)',
+    }}>
 
       {/* Sidebar */}
-      <aside style={{ width: 200, background: '#fff', borderRight: '1px solid #e5e7eb', padding: '24px 0', flexShrink: 0 }}>
-        <div style={{ padding: '0 20px 20px', borderBottom: '1px solid #e5e7eb', marginBottom: 8 }}>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>🤖 Browser Agent</div>
-          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>Settings</div>
+      <aside style={{
+        width: 200, background: 'var(--bg-elevated)',
+        borderRight: '1px solid var(--border)', padding: '24px 0', flexShrink: 0,
+      }}>
+        <div style={{ padding: '0 20px 20px', borderBottom: '1px solid var(--border)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <AgentLogo size={20} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Browser Agent</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>Settings</div>
+          </div>
         </div>
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             display: 'flex', alignItems: 'center', gap: 10, width: '100%',
             padding: '10px 20px', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13,
-            background: tab === t.id ? '#f0f0ff' : 'transparent',
-            color: tab === t.id ? '#4f46e5' : '#374151',
+            background: tab === t.id ? 'var(--bg-active)' : 'transparent',
+            color: tab === t.id ? 'var(--accent)' : 'var(--text-secondary)',
             fontWeight: tab === t.id ? 600 : 400,
-            borderRight: tab === t.id ? '3px solid #4f46e5' : '3px solid transparent',
+            borderRight: tab === t.id ? '3px solid var(--accent)' : '3px solid transparent',
+            transition: 'background 0.1s, color 0.1s',
           }}>
             <span>{t.icon}</span>
             {t.label}

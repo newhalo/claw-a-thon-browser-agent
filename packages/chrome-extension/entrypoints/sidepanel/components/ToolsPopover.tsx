@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
+import { Wrench, X } from 'lucide-react';
 import ToolsPanel from './ToolsPanel';
 
 export default function ToolsPopover() {
@@ -16,14 +17,13 @@ export default function ToolsPopover() {
             borderRadius: 6,
             padding: '4px 8px',
             cursor: 'pointer',
-            fontSize: 14,
             color: 'var(--text-secondary)',
             display: 'flex',
             alignItems: 'center',
             gap: 4,
           }}
         >
-          🔧 <span style={{ fontSize: 12 }}>Tools</span>
+          <Wrench size={14} /> <span style={{ fontSize: 12 }}>Tools</span>
         </button>
       </Popover.Trigger>
 
@@ -46,7 +46,9 @@ export default function ToolsPopover() {
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Browser Tools</span>
             <Popover.Close asChild>
-              <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-secondary)' }}>×</button>
+              <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', padding: 2 }}>
+                <X size={14} />
+              </button>
             </Popover.Close>
           </div>
           <ToolsPanel compact />

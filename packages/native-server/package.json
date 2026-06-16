@@ -5,6 +5,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
+    "dev": "env-cmd .env.local node --watch server.json",
     "start": "node server.js --env-file .env"
   },
   "engines": {
@@ -14,5 +15,8 @@
   "dependencies": {
     "@mcp-b/native-server": "^1.0.47"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "env-cmd": "^11.0.0"
+  }
 }

@@ -2,28 +2,31 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import * as Popover from '@radix-ui/react-popover';
+import {
+  ArrowUp, Square, ArrowLeft, ChevronUp, ChevronDown, X, Plus,
+  History, Check, Loader2, CheckCircle2, Wrench, Target, AlertTriangle,
+  Bot,
+} from 'lucide-react';
 import ToolsPopover from '../components/ToolsPopover';
-import { getAgentServiceConfig, checkAgentServiceHealth, pushProviderConfig, pushNativeConfigToAgentService, fetchModels, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
+import { getAgentServiceConfig, checkAgentServiceHealth, setAgentToken, pushProviderConfig, listModelsForConfiguredProvider, fetchProviderConfig, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, DEFAULT_AGENT_SERVICE_URL, type Skill, type CustomSkill, type ModelInfo } from '../lib/agentServiceClient';
 import { useChatStore, type ChatMessage, type ToolInvocation, type MessageSegment, type ChatSession, sessionTitle, loadSessionsFromStorage, saveSessionsToStorage, upsertSession } from '../lib/chatStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Re-push saved provider + native config to agent-service after a restart */
+/** Re-push saved provider config to agent-service after a restart */
 async function repushProviderConfig(agentServiceUrl: string): Promise<boolean> {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(['agentProviderConfig', 'agentNativeConfig'], async (result) => {
+    chrome.storage.sync.get(['agentProviderConfig'], async (result) => {
       try {
-        // Re-push native config
-        chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, async (response) => {
-          const cfg = response?.config;
-          if (cfg?.nativeServerUrl) {
-            await pushNativeConfigToAgentService(agentServiceUrl, cfg.nativeServerUrl, cfg.authToken);
-          }
-        });
-        // Re-push provider config
         const saved = result.agentProviderConfig;
         if (!saved?.provider || !saved?.apiKey) { resolve(false); return; }
-        const ok = await pushProviderConfig(agentServiceUrl, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported, saved.embeddingModel);
+        // Normalize legacy 'openai-compat' saved before 'vngcloud' provider type existed
+        let provider = saved.provider;
+        if (provider === 'openai-compat' && typeof saved.baseUrl === 'string' && saved.baseUrl.includes('vngcloud')) {
+          provider = 'vngcloud';
+          chrome.storage.sync.set({ agentProviderConfig: { ...saved, provider } });
+        }
+        const ok = await pushProviderConfig(agentServiceUrl, provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported, saved.embeddingModel);
         resolve(ok);
       } catch {
         resolve(false);
@@ -125,20 +128,17 @@ function ToolCallBlock({ inv, serviceUrl }: { inv: ToolInvocation; serviceUrl: s
           textAlign: 'left',
         }}
       >
-        <span style={{ fontSize: 13 }}>{done ? '✅' : '⚙️'}</span>
+        <span style={{ display: 'flex', alignItems: 'center', color: done ? 'var(--success)' : 'var(--accent)', flexShrink: 0 }}>
+          {done
+            ? <CheckCircle2 size={14} />
+            : <Loader2 size={14} style={{ animation: 'spin 0.8s linear infinite' }} />}
+        </span>
         <span style={{ fontWeight: 600, color: 'var(--text-primary)', flex: 1, textTransform: 'capitalize' }}>
           {label}
         </span>
-        {!done && (
-          <span style={{
-            width: 10, height: 10, borderRadius: '50%',
-            border: '2px solid var(--accent)',
-            borderTopColor: 'transparent',
-            animation: 'spin 0.8s linear infinite',
-            display: 'inline-block',
-          }} />
-        )}
-        <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{open ? '▴' : '▾'}</span>
+        <span style={{ color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
+          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        </span>
       </button>
 
       {open && (
@@ -242,7 +242,7 @@ function SkillsPopover({ skills, activeIds, onToggle, disabled }: {
             display: 'flex', alignItems: 'center', gap: 4,
           }}
         >
-          🎯 <span style={{ fontSize: 12 }}>Skills{activeCount > 0 ? ` · ${activeCount}` : ''}</span>
+          <Target size={14} /> <span style={{ fontSize: 12 }}>Skills{activeCount > 0 ? ` · ${activeCount}` : ''}</span>
         </button>
       </Popover.Trigger>
 
@@ -255,7 +255,7 @@ function SkillsPopover({ skills, activeIds, onToggle, disabled }: {
           <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Agent Skills</span>
             <Popover.Close asChild>
-              <button style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-secondary)' }}>×</button>
+              <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', padding: 2 }}><X size={14} /></button>
             </Popover.Close>
           </div>
           <div style={{ padding: '6px 8px' }}>
@@ -279,7 +279,7 @@ function SkillsPopover({ skills, activeIds, onToggle, disabled }: {
                     <div style={{ fontSize: 12, fontWeight: active ? 600 : 500, color: active ? 'var(--accent)' : 'var(--text-primary)' }}>{skill.name}</div>
                     <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill.description}</div>
                   </div>
-                  {active && <span style={{ fontSize: 11, color: 'var(--accent)', flexShrink: 0 }}>✓</span>}
+                  {active && <Check size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} />}
                 </button>
               );
             })}
@@ -342,7 +342,7 @@ function HistoryPanel({ sessions, currentId, onLoad, onDelete, onClose }: {
         padding: '8px 12px', borderBottom: '1px solid var(--border)',
         background: 'var(--bg-surface)',
       }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: 'var(--text-secondary)', padding: '0 4px', lineHeight: 1 }}>←</button>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '0 4px', display: 'flex', alignItems: 'center' }}><ArrowLeft size={16} /></button>
         <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>Lịch sử chat</span>
         <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sorted.length} phiên</span>
       </div>
@@ -377,9 +377,9 @@ function HistoryPanel({ sessions, currentId, onLoad, onDelete, onClose }: {
               <button
                 onClick={e => { e.stopPropagation(); onDelete(s.id); }}
                 title="Xoá phiên"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', padding: '2px 4px', borderRadius: 4, flexShrink: 0, opacity: 0.6 }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '2px 4px', borderRadius: 4, flexShrink: 0, opacity: 0.6, display: 'flex', alignItems: 'center' }}
               >
-                ✕
+                <X size={13} />
               </button>
             </div>
           );
@@ -411,7 +411,7 @@ function SendButton({ input, onSend }: { input: string; onSend: () => void }) {
         transition: 'background 0.15s, color 0.15s',
       }}
     >
-      <span style={{ color: active && hovered ? 'white' : undefined, transition: 'color 0.15s' }}>↑</span>
+      <ArrowUp size={15} style={{ color: active && hovered ? 'white' : undefined, transition: 'color 0.15s' }} />
     </button>
   );
 }
@@ -440,9 +440,9 @@ interface Props { onOpenSettings: () => void }
 export default function ChatView({ onOpenSettings }: Props) {
   const { messages, conversationId, currentSessionId, isLoading, streamError, activeSkills, addMessage, updateLastAssistant, setLoading, setError, newSession, loadSession, toggleSkill } = useChatStore();
   const [input, setInput] = useState('');
-  const [serviceUrl, setServiceUrl] = useState('http://localhost:3000');
+  const [serviceUrl, setServiceUrl] = useState(DEFAULT_AGENT_SERVICE_URL);
   const [online, setOnline] = useState<boolean | null>(null);
-  const [models, setModels] = useState<PredefinedModel[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [activeModelId, setActiveModelId] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
   const [disabledSkillIds, setDisabledSkillIds] = useState<string[]>([]);
@@ -461,15 +461,20 @@ export default function ChatView({ onOpenSettings }: Props) {
   useEffect(() => {
     getAgentServiceConfig().then(cfg => {
       setServiceUrl(cfg.url);
+      setAgentToken(cfg.token); // ensure module-level cache is fresh
       checkAgentServiceHealth(cfg.url).then(ok => setOnline(ok));
-      fetchModels(cfg.url).then(list => {
+      Promise.all([
+        listModelsForConfiguredProvider(cfg.url),
+        fetchProviderConfig(cfg.url),
+      ]).then(([list, serverCfg]) => {
         setModels(list);
         chrome.storage.sync.get(['agentProviderConfig'], result => {
           const saved = result.agentProviderConfig;
           const savedId = saved?.modelId || saved?.model;
-          const match = list.find(m => m.id === savedId);
-          const def = list.find(m => m.default) ?? list[0];
-          setActiveModelId(match?.id ?? def?.id ?? '');
+          // Priority: saved local match → server env default → first in list
+          const match = list.find(m => m.id === savedId)
+            ?? list.find(m => m.id === serverCfg?.model);
+          setActiveModelId(match?.id ?? list[0]?.id ?? serverCfg?.model ?? '');
         });
       });
       fetchSkills(cfg.url).then(setSkills);
@@ -482,10 +487,15 @@ export default function ChatView({ onOpenSettings }: Props) {
 
     // Sync skill settings changed from options page
     const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>) => {
-      if (changes.disabledSkills)          setDisabledSkillIds(changes.disabledSkills.newValue ?? []);
-      if (changes.customSkills)            setCustomSkills(changes.customSkills.newValue ?? []);
-      if (changes.customMcpServers)        doPushMcp();
+      if (changes.disabledSkills)           setDisabledSkillIds(changes.disabledSkills.newValue ?? []);
+      if (changes.customSkills)             setCustomSkills(changes.customSkills.newValue ?? []);
+      if (changes.customMcpServers)         doPushMcp();
       if (changes.disabledExternalMcpTools) setDisabledExternalTools(changes.disabledExternalMcpTools.newValue ?? []);
+      if (changes.agentProviderConfig) {
+        const cfg = changes.agentProviderConfig.newValue;
+        const newId = cfg?.modelId || cfg?.model;
+        if (newId) setActiveModelId(newId);
+      }
     };
     chrome.storage.sync.onChanged.addListener(onStorageChanged);
 
@@ -549,9 +559,10 @@ export default function ChatView({ onOpenSettings }: Props) {
     try {
       const chatBody = { messages: historyForRequest, conversationId, activeSkills, customSkills: customSkills.filter(s => activeSkills.includes(s.id)), ...(disabledExternalTools.length ? { disabledTools: disabledExternalTools } : {}) };
 
+      const { getAuthHeaders } = await import('../lib/agentServiceClient');
       let res = await fetch(`${serviceUrl}/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
         body: JSON.stringify(chatBody),
         signal: abortRef.current.signal,
       });
@@ -564,7 +575,7 @@ export default function ChatView({ onOpenSettings }: Props) {
           if (repushed) {
             res = await fetch(`${serviceUrl}/chat`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
               body: JSON.stringify(chatBody),
               signal: abortRef.current?.signal,
             });
@@ -696,19 +707,15 @@ export default function ChatView({ onOpenSettings }: Props) {
   }, [messages, isLoading, serviceUrl, conversationId]);
 
   const switchModel = useCallback((modelId: string) => {
-    const model = models.find(m => m.id === modelId);
-    if (!model) return;
     chrome.storage.sync.get(['agentProviderConfig'], async result => {
-      const saved = result.agentProviderConfig;
-      const apiKey = saved?.apiKey || '';
-      if (!apiKey) return;
-      const ok = await pushProviderConfig(serviceUrl, model.provider, apiKey, model.id, model.baseUrl, model.toolsSupported, model.visionSupported);
+      const saved = result.agentProviderConfig ?? {};
+      const ok = await pushProviderConfig(serviceUrl, saved.provider || 'openai-compat', saved.apiKey || '', modelId, saved.baseUrl || undefined, saved.toolsSupported ?? false, saved.visionSupported ?? false, saved.embeddingModel);
       if (ok) {
-        setActiveModelId(model.id);
-        chrome.storage.sync.set({ agentProviderConfig: { ...saved, modelId: model.id, provider: model.provider, model: model.id, baseUrl: model.baseUrl ?? '', toolsSupported: model.toolsSupported, visionSupported: model.visionSupported } });
+        setActiveModelId(modelId);
+        chrome.storage.sync.set({ agentProviderConfig: { ...saved, modelId, model: modelId } });
       }
     });
-  }, [models, serviceUrl]);
+  }, [serviceUrl]);
 
   const handleNewChat = useCallback(() => {
     // Save current session before clearing (if it has messages)
@@ -791,16 +798,16 @@ export default function ChatView({ onOpenSettings }: Props) {
         <button
           onClick={() => setShowHistory(v => !v)}
           title="Lịch sử chat"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 13, padding: '1px 4px', borderRadius: 4 }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '1px 4px', borderRadius: 4, display: 'flex', alignItems: 'center' }}
         >
-          ⏱
+          <History size={13} />
         </button>
         <button
           onClick={handleNewChat}
           title="Chat mới"
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '1px 4px', borderRadius: 4, fontWeight: 600 }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '1px 4px', borderRadius: 4, display: 'flex', alignItems: 'center' }}
         >
-          +
+          <Plus size={14} />
         </button>
       </div>
 
@@ -808,7 +815,7 @@ export default function ChatView({ onOpenSettings }: Props) {
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 14px 8px' }}>
         {messages.length === 0 && (
           <div style={{ textAlign: 'center', paddingTop: 48 }}>
-            <div style={{ fontSize: 36, marginBottom: 14 }}>🤖</div>
+            <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'center' }}><Bot size={40} style={{ color: 'var(--accent)', opacity: 0.7 }} /></div>
             <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8, color: 'var(--text-primary)' }}>
               Browser Agent
             </div>
@@ -831,9 +838,9 @@ export default function ChatView({ onOpenSettings }: Props) {
           <div style={{
             padding: '8px 12px', borderRadius: 8, marginBottom: 10,
             background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.25)',
-            color: 'var(--error)', fontSize: 12,
+            color: 'var(--error)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6,
           }}>
-            ⚠️ {streamError}
+            <AlertTriangle size={13} style={{ flexShrink: 0 }} /> {streamError}
           </div>
         )}
 
@@ -859,30 +866,32 @@ export default function ChatView({ onOpenSettings }: Props) {
             disabled={isLoading}
           />
           {/* Model selector */}
-          {models.length > 0 && (
-            <select
-              value={activeModelId}
-              onChange={e => switchModel(e.target.value)}
-              disabled={isLoading}
-              title="Chọn model"
-              style={{
-                marginLeft: 'auto',
-                background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                borderRadius: 6, padding: '3px 6px',
-                fontSize: 12, color: 'var(--text-secondary)',
-                fontFamily: 'inherit', cursor: 'pointer', outline: 'none',
-                maxWidth: 140,
-              }}
-            >
-              {Array.from(new Set(models.map(m => m.category))).map(cat => (
-                <optgroup key={cat} label={cat}>
-                  {models.filter(m => m.category === cat).map(m => (
-                    <option key={m.id} value={m.id}>{m.name}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          )}
+          {models.length > 0 && (() => {
+            const CHAT_TYPES = new Set(['chat', 'messages', 'responses', 'generateContent']);
+            const chatModels = models.filter(m =>
+              (!m.model_type || CHAT_TYPES.has(m.model_type)) &&
+              (!m.status || m.status === 'enabled')
+            );
+            const opts = chatModels.length > 0 ? chatModels : models.filter(m => !m.status || m.status === 'enabled');
+            return (
+              <select
+                value={activeModelId}
+                onChange={e => switchModel(e.target.value)}
+                disabled={isLoading}
+                title="Chọn model"
+                style={{
+                  marginLeft: 'auto',
+                  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                  borderRadius: 6, padding: '3px 6px',
+                  fontSize: 12, color: 'var(--text-secondary)',
+                  fontFamily: 'inherit', cursor: 'pointer', outline: 'none',
+                  maxWidth: 160,
+                }}
+              >
+                {opts.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
+              </select>
+            );
+          })()}
         </div>
 
         {/* Text input row */}
@@ -924,10 +933,10 @@ export default function ChatView({ onOpenSettings }: Props) {
               style={{
                 width: 30, height: 30, borderRadius: 8, border: 'none',
                 background: 'var(--error)', color: 'white',
-                cursor: 'pointer', fontSize: 12, flexShrink: 0,
+                cursor: 'pointer', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}
-            >■</button>
+            ><Square size={13} fill="white" /></button>
           ) : (
             <SendButton input={input} onSend={() => sendMessage(input)} />
           )}
