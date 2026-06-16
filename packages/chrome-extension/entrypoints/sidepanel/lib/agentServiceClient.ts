@@ -98,7 +98,7 @@ export interface CustomSkill {
 
 /** Parse a SKILL.md string (YAML frontmatter + markdown body). */
 export function parseSkillMd(raw: string, sourceUrl: string): Omit<CustomSkill, 'addedAt' | 'hasScripts'> {
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  const fmMatch = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
   if (!fmMatch) throw new Error('Invalid SKILL.md format — missing YAML frontmatter');
 
   const fm = fmMatch[1];
@@ -210,12 +210,22 @@ export async function fetchSkillFromUrl(inputUrl: string): Promise<Omit<CustomSk
 
 export function loadCustomSkills(): Promise<CustomSkill[]> {
   return new Promise(resolve => {
-    chrome.storage.sync.get(['customSkills'], r => resolve(r.customSkills || []));
+    // Try local first (migrated data), fall back to sync for backward compat
+    chrome.storage.local.get(['customSkills'], r => {
+      if (r.customSkills) { resolve(r.customSkills); return; }
+      chrome.storage.sync.get(['customSkills'], sr => resolve(sr.customSkills || []));
+    });
   });
 }
 
 export function saveCustomSkills(skills: CustomSkill[]): Promise<void> {
-  return new Promise(resolve => chrome.storage.sync.set({ customSkills: skills }, resolve));
+  return new Promise((resolve, reject) => {
+    // Use local storage — no per-item size limit (vs sync's 8KB cap)
+    chrome.storage.local.set({ customSkills: skills }, () => {
+      if (chrome.runtime.lastError) { reject(new Error(chrome.runtime.lastError.message)); return; }
+      resolve();
+    });
+  });
 }
 
 export function loadDisabledSkills(): Promise<string[]> {

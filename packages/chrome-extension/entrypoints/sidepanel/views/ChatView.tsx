@@ -481,6 +481,14 @@ export default function ChatView({ onOpenSettings }: Props) {
     });
     loadDisabledSkills().then(setDisabledSkillIds);
     loadCustomSkills().then(setCustomSkills);
+    // Restore active skills across sidepanel reloads
+    chrome.storage.local.get(['activeSkills'], r => {
+      if (Array.isArray(r.activeSkills) && r.activeSkills.length > 0) {
+        r.activeSkills.forEach((id: string) => {
+          if (!activeSkills.includes(id)) toggleSkill(id);
+        });
+      }
+    });
     chrome.storage.sync.get('disabledExternalMcpTools', r => {
       setDisabledExternalTools(Array.isArray(r.disabledExternalMcpTools) ? r.disabledExternalMcpTools : []);
     });
@@ -498,6 +506,7 @@ export default function ChatView({ onOpenSettings }: Props) {
       }
     };
     chrome.storage.sync.onChanged.addListener(onStorageChanged);
+    chrome.storage.local.onChanged.addListener(onStorageChanged);
 
     // Restore sent message history
     chrome.storage.local.get(['chatSentHistory'], r => {
@@ -518,7 +527,10 @@ export default function ChatView({ onOpenSettings }: Props) {
     };
     doPushMcp();
 
-    return () => chrome.storage.sync.onChanged.removeListener(onStorageChanged);
+    return () => {
+      chrome.storage.sync.onChanged.removeListener(onStorageChanged);
+      chrome.storage.local.onChanged.removeListener(onStorageChanged);
+    };
   }, []);
 
   useEffect(() => {
@@ -704,7 +716,7 @@ export default function ChatView({ onOpenSettings }: Props) {
         });
       }
     }
-  }, [messages, isLoading, serviceUrl, conversationId]);
+  }, [messages, isLoading, serviceUrl, conversationId, activeSkills, customSkills]);
 
   const switchModel = useCallback((modelId: string) => {
     chrome.storage.sync.get(['agentProviderConfig'], async result => {
@@ -862,7 +874,13 @@ export default function ChatView({ onOpenSettings }: Props) {
               ...customSkills.filter(s => !disabledSkillIds.includes(s.id)),
             ]}
             activeIds={activeSkills}
-            onToggle={toggleSkill}
+            onToggle={(id) => {
+              toggleSkill(id);
+              const next = activeSkills.includes(id)
+                ? activeSkills.filter(x => x !== id)
+                : [...activeSkills, id];
+              chrome.storage.local.set({ activeSkills: next });
+            }}
             disabled={isLoading}
           />
           {/* Model selector */}
