@@ -5,4 +5,5 @@ packages/test-agent
 packages/WebMCP
 .history
 .env
+node_modules/
 packages/agent-service/data/*.db

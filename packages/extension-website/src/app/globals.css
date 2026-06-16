@@ -1,0 +1,65 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Dark theme (default) ── */
+:root, [data-theme="dark"] {
+  --bg: #191929;
+  --surface: #22233a;
+  --surface2: #1d1e31;
+  --border: #2e2f4a;
+  --accent: #6B7FFF;
+  --success: #00E5A0;
+  --muted: #9899b5;
+  --fg: #e8e9f5;
+  --fg-strong: #ffffff;
+  --code-bg: #14152a;
+}
+
+/* ── Light theme ── */
+[data-theme="light"] {
+  --bg: #f4f5ff;
+  --surface: #ffffff;
+  --surface2: #eef0ff;
+  --border: #d4d7f0;
+  --accent: #4f5fe8;
+  --success: #00996a;
+  --muted: #6b6d8a;
+  --fg: #2a2c4a;
+  --fg-strong: #0f1028;
+  --code-bg: #eef0ff;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background-color: var(--bg);
+  color: var(--fg);
+  font-family: Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Code blocks */
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.875em;
+}
+
+pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+}

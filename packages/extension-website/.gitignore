@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.wxt/
+*.lock
+*.log
+.DS_Store
+.env
+.env.local
+/.next/*
+/.next/
+out/
+build/
+coverage/
