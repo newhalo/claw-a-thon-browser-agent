@@ -44,7 +44,7 @@ jobs:
         id: find_zip
         working-directory: packages/chrome-extension
         run: |
-          ZIP_FILE=$(find .output -name "*.zip" | head -1)
+          ZIP_FILE=$(find dist -name "*.zip" | head -1)
           echo "zip_file=packages/chrome-extension/$ZIP_FILE" >> $GITHUB_OUTPUT
           echo "zip_name=$(basename $ZIP_FILE)" >> $GITHUB_OUTPUT
           echo "Found: $ZIP_FILE"
