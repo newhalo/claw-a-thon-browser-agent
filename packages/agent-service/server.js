@@ -9,7 +9,12 @@ import { getSkillsPublic } from './skills/registry.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || 'localhost';
-const AGENT_TOKEN = process.env.AGENT_TOKEN || '';
+
+// Support multiple tokens via AUTH_TOKENS (comma-separated) or legacy AGENT_TOKEN
+const VALID_TOKENS = [
+  ...((process.env.AUTH_TOKENS || '').split(',').map(t => t.trim()).filter(Boolean)),
+  ...(process.env.AGENT_TOKEN ? [process.env.AGENT_TOKEN.trim()] : []),
+];
 
 const ALLOWED_ORIGINS = (process.env.CORS_ORIGINS || 'chrome-extension://,http://localhost')
   .split(',').map(o => o.trim());
@@ -45,18 +50,18 @@ const server = http.createServer(async (req, res) => {
       status: 'ok',
       service: 'agent-service',
       port: PORT,
-      authRequired: !!AGENT_TOKEN,
+      authRequired: VALID_TOKENS.length > 0,
       provider: providerStatus,
       mcp: getMcpConfig().url,
     }));
     return;
   }
 
-  // ── Auth middleware (all routes below require valid token if AGENT_TOKEN set) ─
-  if (AGENT_TOKEN) {
+  // ── Auth middleware ──────────────────────────────────────────────────────────
+  if (VALID_TOKENS.length > 0) {
     const authHeader = req.headers['authorization'] || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    if (token !== AGENT_TOKEN) {
+    if (!VALID_TOKENS.includes(token)) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'unauthorized', message: 'Invalid or missing agent token' }));
       return;
