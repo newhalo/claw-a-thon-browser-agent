@@ -419,7 +419,7 @@ node server.js`} />
               On first open, the extension shows a setup wizard. Fill in:
             </p>
             <ol className="space-y-2 text-sm text-brand-muted list-decimal list-inside">
-              <li><span className="text-brand-strong font-medium">Native Server URL</span> — e.g. <code>http://localhost:8080</code> or the AgentBase endpoint URL</li>
+              <li><span className="text-brand-strong font-medium">Native Server URL</span> — e.g. <code>https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp</code></li>
               <li><span className="text-brand-strong font-medium">Auth Token</span> — must match <code>AUTH_TOKEN</code> in native-server&apos;s <code>.env</code></li>
               <li><span className="text-brand-strong font-medium">LLM Provider</span> — choose Anthropic, OpenAI, or any OpenAI-compatible endpoint</li>
             </ol>
@@ -443,12 +443,7 @@ node server.js`} />
             </div>
           </SubSection>
 
-          {/* Options screenshot placeholder */}
-          <div className="rounded-xl border-2 border-dashed border-brand-border bg-brand-surface/50 h-52 flex flex-col items-center justify-center gap-2 text-brand-muted mt-4">
-            <span className="text-3xl">📸</span>
-            <p className="text-sm font-medium">[ Screenshot: Options page — Security tab ]</p>
-            <p className="text-xs opacity-60">Save as: public/screenshots/options-security.png</p>
-          </div>
+          <img src="/screenshots/options-security.png" alt="Options page — Security tab" className="rounded-lg w-full border border-brand-border mt-4" />
         </Section>
 
         {/* ── Connect MCP Clients ── */}
@@ -499,12 +494,7 @@ node server.js`} />
               </li>
             </ol>
 
-            {/* Security tab screenshot placeholder */}
-            <div className="rounded-xl border-2 border-dashed border-brand-border bg-brand-surface/50 aspect-video flex flex-col items-center justify-center gap-2 text-brand-muted">
-              <span className="text-3xl">📸</span>
-              <p className="text-sm font-medium">[ Screenshot: Security tab — token creation + copy UI ]</p>
-              <p className="text-xs opacity-60">Save as: public/screenshots/security-new-token.png</p>
-            </div>
+            <img src="/screenshots/security-new-token.png" alt="Security tab — token creation + copy UI" className="rounded-lg w-full border border-brand-border" />
           </SubSection>
 
           <SubSection title="Step 2 — Configure your MCP client">
@@ -520,7 +510,7 @@ node server.js`} />
   "mcpServers": {
     "browser-agent": {
       "type": "http",
-      "url": "http://127.0.0.1:8080/mcp",
+      "url": "https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp",
       "headers": {
         "Authorization": "Bearer <your-token>"
       }
@@ -542,7 +532,7 @@ node server.js`} />
   "mcpServers": {
     "browser-agent": {
       "type": "http",
-      "url": "http://127.0.0.1:8080/mcp",
+      "url": "https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp",
       "headers": {
         "Authorization": "Bearer <your-token>"
       }
@@ -555,9 +545,9 @@ node server.js`} />
               <div className="rounded-lg border border-brand-border bg-brand-surface/50 p-4">
                 <p className="text-brand-strong font-medium text-sm mb-2">Using the cloud (AgentBase) endpoint</p>
                 <p className="text-brand-muted text-xs mb-3">
-                  If native-server is deployed to AgentBase, replace <code>http://127.0.0.1:8080</code> with the AgentBase endpoint URL:
+                  The native-server is deployed on AgentBase. Use the endpoint URL below:
                 </p>
-                <CodeBlock code={`"url": "https://endpoint-<id>.agentbase-runtime.aiplatform.vngcloud.vn/mcp"`} />
+                <CodeBlock code={`"url": "https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp"`} />
                 <p className="text-xs text-brand-muted mt-2">
                   The token-based auth works identically for local and cloud deployments.
                 </p>
@@ -568,13 +558,13 @@ node server.js`} />
           <SubSection title="Verify the connection">
             <p className="text-brand-muted text-xs mb-3">Test the MCP handshake with curl:</p>
             <CodeBlock code={`# Initialize session
-curl -X POST http://localhost:8080/mcp \\
+curl -X POST https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp \\
   -H "Authorization: Bearer <your-token>" \\
   -H "Content-Type: application/json" \\
   -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test","version":"1.0"}},"id":1}'
 
 # Save mcp-session-id from response header, then list tools:
-curl -X POST http://localhost:8080/mcp \\
+curl -X POST https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp \\
   -H "Authorization: Bearer <your-token>" \\
   -H "Content-Type: application/json" \\
   -H "mcp-session-id: <session-id>" \\

@@ -62,7 +62,7 @@ const steps: Step[] = [
     title: 'Configure the connection',
     description: 'Click the Browser Agent icon → open Options (or right-click → Options). Go to the General tab and enter the Agent Service URL and your authentication token.',
     screenshot: 'step-6-options.png',
-    note: 'Use token test-token-18gOCw to test the agent right away.',
+    note: 'Token is provided on the project info page or contact the owner to get one.',
     code: 'Agent Service URL: https://endpoint-a24a9556-762d-4969-9253-a4aa8019faf8.agentbase-runtime.aiplatform.vngcloud.vn',
   },
   {

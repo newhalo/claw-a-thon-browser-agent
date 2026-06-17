@@ -23,7 +23,7 @@ const PRESET_CLIENTS = [
   { label: 'Claude', clientId: 'claude' },
 ];
 
-function TokensPanel({ nativeServerUrl }: TokensPanelProps) {
+function TokensPanel({ nativeServerUrl: nativeServerUrlProp }: TokensPanelProps) {
   const [tokens, setTokens] = useState<TokenEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +33,14 @@ function TokensPanel({ nativeServerUrl }: TokensPanelProps) {
   const [createClientId, setCreateClientId] = useState('');
   const [newToken, setNewToken] = useState<CreatedToken | null>(null);
   const [copied, setCopied] = useState(false);
+  const [nativeServerUrl, setNativeServerUrl] = useState(nativeServerUrlProp || '');
+
+  useEffect(() => {
+    if (nativeServerUrlProp) { setNativeServerUrl(nativeServerUrlProp); return; }
+    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (response) => {
+      if (response?.config?.nativeServerUrl) setNativeServerUrl(response.config.nativeServerUrl);
+    });
+  }, [nativeServerUrlProp]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
