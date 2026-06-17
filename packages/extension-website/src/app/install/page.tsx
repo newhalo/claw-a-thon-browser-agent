@@ -25,7 +25,7 @@ const steps: Step[] = [
     title: 'Download the extension',
     description: 'Click the Download button to grab the latest release from GitHub. Save the .zip file anywhere on your computer.',
     screenshot: 'step-1-download.png',
-    note: 'The file will be named something like claw-a-thon-mcp-extension-x.x.x.zip',
+    note: 'The file will be named browser-agent-extension-x.x.x-chrome.zip',
   },
   {
     number: 2,
@@ -60,10 +60,10 @@ const steps: Step[] = [
     number: 6,
     icon: Settings,
     title: 'Configure the connection',
-    description: 'Click the Browser Agent icon → open Options (or right-click → Options). Enter your Native Server URL and authentication token.',
+    description: 'Click the Browser Agent icon → open Options (or right-click → Options). Go to the General tab and enter the Agent Service URL and your authentication token.',
     screenshot: 'step-6-options.png',
-    note: 'Default native server runs at http://localhost:12306. Get your token from the native server configuration.',
-    code: 'Native Server URL: http://localhost:12306',
+    note: 'Use token test-token-18gOCw to test the agent right away.',
+    code: 'Agent Service URL: https://endpoint-a24a9556-762d-4969-9253-a4aa8019faf8.agentbase-runtime.aiplatform.vngcloud.vn',
   },
   {
     number: 7,
@@ -76,11 +76,11 @@ const steps: Step[] = [
 
 function PlaceholderScreenshot({ filename, step }: { filename: string; step: number }) {
   return (
-    <div className="rounded-lg border-2 border-dashed border-brand-border bg-brand-surface/50 aspect-video flex flex-col items-center justify-center gap-2 text-brand-muted">
-      <span className="text-3xl">📸</span>
-      <p className="text-sm font-medium">[ Screenshot: Step {step} ]</p>
-      <p className="text-xs opacity-60">Save as: public/screenshots/{filename}</p>
-    </div>
+    <img
+      src={`/screenshots/${filename}`}
+      alt={`Step ${step}`}
+      className="rounded-lg w-full border border-brand-border"
+    />
   );
 }
 
@@ -100,8 +100,7 @@ export default function InstallPage() {
         <h2 className="font-semibold text-brand-strong mb-3">Requirements</h2>
         <ul className="space-y-1 text-sm text-brand-muted list-disc list-inside">
           <li>Google Chrome 120 or newer</li>
-          <li>Native Server running locally (see <a href="/docs#native-server" className="text-brand-accent hover:underline">Docs</a>)</li>
-          <li>Agent Service running (optional, for LLM-powered automation)</li>
+          <li>Developer mode enabled in <code className="text-xs bg-brand-surface px-1 py-0.5 rounded">chrome://extensions</code></li>
         </ul>
       </div>
 
@@ -165,10 +164,13 @@ export default function InstallPage() {
           <h2 className="font-semibold text-white">Video walkthrough</h2>
           <p className="text-sm text-brand-muted mt-1">Watch the full installation in under 2 minutes.</p>
         </div>
-        <div className="aspect-video m-6 rounded-lg border-2 border-dashed border-brand-border flex flex-col items-center justify-center gap-2 text-brand-muted">
-          <span className="text-4xl">🎬</span>
-          <p className="text-sm font-medium">[ Installation video — record and embed here ]</p>
-          <p className="text-xs opacity-60">Recommended: Loom or YouTube embed, show Steps 1–7</p>
+        <div className="aspect-video m-6 rounded-lg overflow-hidden">
+          <iframe
+            src="https://drive.google.com/file/d/17_Ex2dctgPrXzvyh2iKswalGhVIWnMhS/preview"
+            className="w-full h-full"
+            allow="autoplay"
+            allowFullScreen
+          />
         </div>
       </div>
 

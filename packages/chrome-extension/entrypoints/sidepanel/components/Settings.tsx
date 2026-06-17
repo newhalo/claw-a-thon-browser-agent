@@ -484,7 +484,7 @@ function Settings({ onConfigSaved }: SettingsProps) {
 
         {/* ── MCP Client Tokens ─────────────────────────────── */}
         <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 18 }}>
-          <TokensPanel />
+          <TokensPanel nativeServerUrl={url} />
         </div>
       </div>
     </div>

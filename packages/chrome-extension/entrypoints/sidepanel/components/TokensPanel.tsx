@@ -13,13 +13,17 @@ interface CreatedToken extends TokenEntry {
   token: string;
 }
 
+interface TokensPanelProps {
+  nativeServerUrl?: string;
+}
+
 const PRESET_CLIENTS = [
   { label: 'Cursor', clientId: 'cursor' },
   { label: 'ChatGPT', clientId: 'chatgpt' },
   { label: 'Claude', clientId: 'claude' },
 ];
 
-function TokensPanel() {
+function TokensPanel({ nativeServerUrl }: TokensPanelProps) {
   const [tokens, setTokens] = useState<TokenEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -135,11 +139,12 @@ function TokensPanel() {
             </button>
           </div>
           <div className="cursor-config">
-            <p className="cursor-config-label">Cursor MCP config:</p>
+            <p className="cursor-config-label">Cursor / Claude Desktop MCP config:</p>
             <pre className="cursor-config-pre">{JSON.stringify({
-              "webmcp": {
+              "browser-agent": {
                 "type": "http",
-                "url": "http://127.0.0.1:18080/mcp",
+                "description": "Browser Agent — control Chrome with AI",
+                "url": `${(nativeServerUrl || 'http://127.0.0.1:18080').replace(/\/$/, '')}/mcp`,
                 "headers": { "Authorization": `Bearer ${newToken.token}` }
               }
             }, null, 2)}</pre>
