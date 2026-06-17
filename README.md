@@ -62,6 +62,9 @@ Visit the **[website](https://endpoint-27165b8c-a455-4662-a014-7b1fdc133186.agen
 
 Or grab the latest release from [GitHub Releases](https://github.com/newhalo/claw-a-thon-browser-agent/releases/latest), unzip, then load the folder into Chrome via `chrome://extensions` → **Load unpacked**.
 
+> [!WARNING]
+> **Remove the extension after testing.** The extension has broad access to your browser — all open tabs, page content, cookies (if enabled), and navigation. When using a shared test token, anyone with that token can control your browser remotely. Once you finish evaluating, go to `chrome://extensions` and remove Browser Agent to eliminate this attack surface.
+
 ---
 
 ## Docs
