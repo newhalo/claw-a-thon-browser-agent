@@ -56,11 +56,23 @@ function App() {
   useEffect(() => { initApp(); }, []);
 
   async function initApp() {
+    // Check if URL was explicitly saved — fresh install has no saved URL
+    const hasExplicitUrl = await new Promise<boolean>((resolve) => {
+      chrome.storage.sync.get(['agentServiceUrl'], (r) => resolve(!!r.agentServiceUrl));
+    });
+
     const cfg = await getAgentServiceConfig();
     setAgentUrl(cfg.url);
 
     // Initialize module-level auth token for all API calls
     setAgentToken(cfg.token);
+
+    // Never auto-connect on fresh install — always require explicit setup
+    if (!hasExplicitUrl) {
+      setSetupMode('connection');
+      setReady(true);
+      return;
+    }
 
     const h = await checkAgentServiceHealthFull(cfg.url);
     setHealth(h);
