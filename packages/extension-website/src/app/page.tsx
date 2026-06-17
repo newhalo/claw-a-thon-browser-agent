@@ -69,16 +69,16 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Demo video placeholder */}
+      {/* Demo video */}
       <section className="mb-20">
         <div className="rounded-xl border border-brand-border bg-brand-surface overflow-hidden">
-          <div className="aspect-video flex flex-col items-center justify-center gap-3 text-brand-muted">
-            {/* TODO: Replace with screen recording / GIF demo */}
-            <div className="w-16 h-16 rounded-full border-2 border-dashed border-brand-border flex items-center justify-center">
-              <span className="text-2xl">▶</span>
-            </div>
-            <p className="text-sm font-medium">[ Demo video / GIF — record and insert here ]</p>
-            <p className="text-xs opacity-60">Recommended: 1280×720, show agent automating a real task</p>
+          <div className="aspect-video">
+            <iframe
+              src="https://drive.google.com/file/d/1pDn3c5FlXPMG39vhuN11cx4P3PjJBvgY/preview"
+              className="w-full h-full"
+              allow="autoplay"
+              allowFullScreen
+            />
           </div>
         </div>
       </section>
