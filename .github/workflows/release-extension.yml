@@ -1,0 +1,88 @@
+name: Release Chrome Extension
+
+on:
+  push:
+    tags:
+      - 'ext-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. 1.0.1)'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.8.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: packages/chrome-extension/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: packages/chrome-extension
+        run: pnpm install
+
+      - name: Build & zip extension
+        working-directory: packages/chrome-extension
+        run: pnpm zip
+
+      - name: Find zip file
+        id: find_zip
+        working-directory: packages/chrome-extension
+        run: |
+          ZIP_FILE=$(find dist -name "*.zip" | head -1)
+          echo "zip_file=packages/chrome-extension/$ZIP_FILE" >> $GITHUB_OUTPUT
+          echo "zip_name=$(basename $ZIP_FILE)" >> $GITHUB_OUTPUT
+          echo "Found: $ZIP_FILE"
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=ext-v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "version=${TAG#ext-v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Browser Agent v${{ steps.version.outputs.version }}
+          body: |
+            ## Browser Agent v${{ steps.version.outputs.version }}
+
+            ### Cài đặt
+
+            1. Tải file `.zip` bên dưới
+            2. Giải nén vào một thư mục bất kỳ
+            3. Mở Chrome → `chrome://extensions/`
+            4. Bật **Developer mode** (góc trên bên phải)
+            5. Nhấn **Load unpacked** → chọn thư mục vừa giải nén
+            6. Extension đã sẵn sàng!
+
+            > Xem hướng dẫn đầy đủ tại website extension.
+
+            ### Thay đổi
+
+            ${{ github.event.head_commit.message }}
+          files: ${{ steps.find_zip.outputs.zip_file }}
+          draft: false
+          prerelease: false

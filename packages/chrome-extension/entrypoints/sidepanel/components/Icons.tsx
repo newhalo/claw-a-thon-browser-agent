@@ -1,13 +1,18 @@
 import React from 'react';
 
-/** Claw arcs + agent dot logo — matches extension icon */
+/** Circular arc logo — 3 arc segments + center dot, matches extension icon and website header */
 export function AgentLogo({ size = 22 }: { size?: number }) {
+  // 24×24 viewBox: center (12,12), radius 8.25, dot r=1.875
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M 4.5 18.19 C 9 15 9 8.81 4.5 5.81"   stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
-      <path d="M 8.44 19.5 C 13.13 15.75 13.13 8.06 8.44 4.5"  stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
-      <path d="M 12.56 20.81 C 17.63 16.31 17.63 7.69 12.56 3.19" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
-      <circle cx="19.13" cy="4.69" r="2.63" fill="var(--success)"/>
+      {/* top → right */}
+      <path d="M 12 3.75 A 8.25 8.25 0 0 1 20.25 12" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round"/>
+      {/* right → bottom */}
+      <path d="M 20.25 12 A 8.25 8.25 0 0 1 12 20.25" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" opacity="0.7"/>
+      {/* bottom → left */}
+      <path d="M 12 20.25 A 8.25 8.25 0 0 1 3.75 12" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" opacity="0.4"/>
+      {/* center dot */}
+      <circle cx="12" cy="12" r="1.875" fill="var(--success)"/>
     </svg>
   );
 }

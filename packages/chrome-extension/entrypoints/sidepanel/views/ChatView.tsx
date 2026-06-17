@@ -477,10 +477,26 @@ export default function ChatView({ onOpenSettings }: Props) {
           setActiveModelId(match?.id ?? list[0]?.id ?? serverCfg?.model ?? '');
         });
       });
-      fetchSkills(cfg.url).then(setSkills);
+      // Load skills + custom skills + saved activeSkills together, then validate
+      Promise.all([
+        fetchSkills(cfg.url),
+        loadCustomSkills(),
+        new Promise<string[]>(res => chrome.storage.local.get(['activeSkills'], r => res(Array.isArray(r.activeSkills) ? r.activeSkills : []))),
+      ]).then(([builtinSkills, customSkillList, savedActive]) => {
+        setSkills(builtinSkills);
+        setCustomSkills(customSkillList);
+        // Only restore IDs that still exist
+        const validIds = new Set([...builtinSkills.map(s => s.id), ...customSkillList.map(s => s.id)]);
+        const validActive = savedActive.filter(id => validIds.has(id));
+        if (validActive.length !== savedActive.length) {
+          chrome.storage.local.set({ activeSkills: validActive });
+        }
+        validActive.forEach((id: string) => {
+          if (!useChatStore.getState().activeSkills.includes(id)) toggleSkill(id);
+        });
+      });
     });
     loadDisabledSkills().then(setDisabledSkillIds);
-    loadCustomSkills().then(setCustomSkills);
     chrome.storage.sync.get('disabledExternalMcpTools', r => {
       setDisabledExternalTools(Array.isArray(r.disabledExternalMcpTools) ? r.disabledExternalMcpTools : []);
     });
@@ -489,6 +505,13 @@ export default function ChatView({ onOpenSettings }: Props) {
     const onStorageChanged = (changes: Record<string, chrome.storage.StorageChange>) => {
       if (changes.disabledSkills)           setDisabledSkillIds(changes.disabledSkills.newValue ?? []);
       if (changes.customSkills)             setCustomSkills(changes.customSkills.newValue ?? []);
+      if (changes.activeSkills) {
+        const next: string[] = changes.activeSkills.newValue ?? [];
+        // Sync Zustand: toggle any IDs that differ from current state
+        const cur = useChatStore.getState().activeSkills;
+        cur.filter((id: string) => !next.includes(id)).forEach((id: string) => toggleSkill(id));
+        next.filter((id: string) => !cur.includes(id)).forEach((id: string) => toggleSkill(id));
+      }
       if (changes.customMcpServers)         doPushMcp();
       if (changes.disabledExternalMcpTools) setDisabledExternalTools(changes.disabledExternalMcpTools.newValue ?? []);
       if (changes.agentProviderConfig) {
@@ -498,6 +521,7 @@ export default function ChatView({ onOpenSettings }: Props) {
       }
     };
     chrome.storage.sync.onChanged.addListener(onStorageChanged);
+    chrome.storage.local.onChanged.addListener(onStorageChanged);
 
     // Restore sent message history
     chrome.storage.local.get(['chatSentHistory'], r => {
@@ -518,7 +542,10 @@ export default function ChatView({ onOpenSettings }: Props) {
     };
     doPushMcp();
 
-    return () => chrome.storage.sync.onChanged.removeListener(onStorageChanged);
+    return () => {
+      chrome.storage.sync.onChanged.removeListener(onStorageChanged);
+      chrome.storage.local.onChanged.removeListener(onStorageChanged);
+    };
   }, []);
 
   useEffect(() => {
@@ -704,7 +731,7 @@ export default function ChatView({ onOpenSettings }: Props) {
         });
       }
     }
-  }, [messages, isLoading, serviceUrl, conversationId]);
+  }, [messages, isLoading, serviceUrl, conversationId, activeSkills, customSkills]);
 
   const switchModel = useCallback((modelId: string) => {
     chrome.storage.sync.get(['agentProviderConfig'], async result => {
@@ -862,7 +889,13 @@ export default function ChatView({ onOpenSettings }: Props) {
               ...customSkills.filter(s => !disabledSkillIds.includes(s.id)),
             ]}
             activeIds={activeSkills}
-            onToggle={toggleSkill}
+            onToggle={(id) => {
+              toggleSkill(id);
+              const next = activeSkills.includes(id)
+                ? activeSkills.filter(x => x !== id)
+                : [...activeSkills, id];
+              chrome.storage.local.set({ activeSkills: next });
+            }}
             disabled={isLoading}
           />
           {/* Model selector */}

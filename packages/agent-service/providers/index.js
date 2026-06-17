@@ -58,8 +58,8 @@ const envConfig = {
     || process.env.ANTHROPIC_DEFAULT_MODEL || process.env.OPENAI_DEFAULT_MODEL || process.env.CUSTOM_DEFAULT_MODEL
     || process.env.ANTHROPIC_MODEL || process.env.OPENAI_MODEL || process.env.CUSTOM_MODEL || null,
   baseUrl: (isVngCloud ? process.env.VNGCLOUD_BASE_URL : null) || process.env.CUSTOM_BASE_URL || null,
-  toolsSupported: process.env.CUSTOM_TOOLS_SUPPORTED === 'true' ? true : null,
-  visionSupported: process.env.CUSTOM_VISION_SUPPORTED === 'true' ? true : null,
+  toolsSupported: (process.env.VNGCLOUD_TOOLS_SUPPORTED === 'true' || process.env.CUSTOM_TOOLS_SUPPORTED === 'true') ? true : null,
+  visionSupported: (process.env.VNGCLOUD_VISION_SUPPORTED === 'true' || process.env.CUSTOM_VISION_SUPPORTED === 'true') ? true : null,
 };
 
 export function getProviderCfg() {

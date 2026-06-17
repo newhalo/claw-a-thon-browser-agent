@@ -1,6 +1,6 @@
 {
-  "name": "claw-a-thon-mcp-extension",
-  "version": "1.0.0",
+  "name": "browser-agent-extension",
+  "version": "1.0.1",
   "description": "MCP Chrome Extension connecting to Claw-a-thon native server with authentication",
   "private": true,
   "type": "module",

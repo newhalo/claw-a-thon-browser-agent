@@ -448,7 +448,7 @@ export default async function chatRoute(req, res) {
       model: getModel(),
       system: systemPrompt,
       messages: finalMessages,
-      maxSteps: (hasTools && toolsOk) ? 25 : 1,
+      maxSteps: (hasTools && toolsOk) ? (parseInt(process.env.MAX_STEPS || '50', 10)) : 1,
       // Disable built-in retries — 429s retry immediately with no backoff, making things worse.
       // The client should handle retry/backoff at a higher level.
       maxRetries: 0,
