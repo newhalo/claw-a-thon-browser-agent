@@ -1,29 +1,35 @@
 import Link from 'next/link';
-import { Download, Zap, Globe, Lock, Cpu, ArrowRight } from 'lucide-react';
+import { Download, Zap, Globe, Lock, Cpu, ArrowRight, Code2 } from 'lucide-react';
 import { ArchDiagram } from '@/components/ArchDiagram';
 
 const DOWNLOAD_URL = process.env.NEXT_PUBLIC_DOWNLOAD_URL ?? '#';
 
 const features = [
   {
+    icon: Code2,
+    title: 'Website-Provided Tools',
+    description: 'Websites can register their own MCP tools with one script tag. The agent gains domain-specific actions — submit order, filter results, export data — beyond the built-in browser toolkit.',
+    highlight: true,
+  },
+  {
     icon: Globe,
     title: 'Full Browser Control',
-    description: 'Navigate pages, click elements, fill forms, read content — your AI can operate Chrome like a human.',
+    description: 'Navigate pages, click elements, fill forms, read content — your AI can operate Chrome like a human with ~75 built-in browser tools.',
   },
   {
     icon: Zap,
     title: 'MCP Native',
-    description: 'Built on the Model Context Protocol. Works seamlessly with any MCP-compatible AI assistant.',
+    description: 'Built on the Model Context Protocol. Connect Cursor, Claude Desktop, or any MCP-compatible client directly to your browser.',
   },
   {
     icon: Lock,
-    title: 'Secure & Local',
-    description: 'All communication goes through your local native server. No cloud relay, no data leakage.',
+    title: 'Secure by Default',
+    description: 'Every request requires a Bearer token. High-risk tools are disabled by default. Dynamic token management — no server restart needed.',
   },
   {
     icon: Cpu,
-    title: 'Agent-Ready',
-    description: 'Connects to your agent service for LLM-powered multi-step automation workflows.',
+    title: 'Any LLM Provider',
+    description: 'Anthropic, OpenAI, or any OpenAI-compatible endpoint. Switch models without redeploying.',
   },
 ];
 
@@ -45,8 +51,8 @@ export default function HomePage() {
         </h1>
 
         <p className="text-lg text-brand-muted max-w-2xl mx-auto mb-10">
-          Browser Agent is a Chrome extension that exposes your browser as a set of MCP tools —
-          letting any AI assistant navigate, interact, and automate the web on your behalf.
+          Browser Agent turns Chrome into an AI-controllable workspace — with ~75 built-in browser tools
+          and the ability to use <strong className="text-brand-strong">custom tools exposed by the websites you visit</strong>.
         </p>
 
         <div className="flex items-center justify-center gap-4 flex-wrap">
@@ -69,16 +75,16 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Demo video placeholder */}
+      {/* Demo video */}
       <section className="mb-20">
         <div className="rounded-xl border border-brand-border bg-brand-surface overflow-hidden">
-          <div className="aspect-video flex flex-col items-center justify-center gap-3 text-brand-muted">
-            {/* TODO: Replace with screen recording / GIF demo */}
-            <div className="w-16 h-16 rounded-full border-2 border-dashed border-brand-border flex items-center justify-center">
-              <span className="text-2xl">▶</span>
-            </div>
-            <p className="text-sm font-medium">[ Demo video / GIF — record and insert here ]</p>
-            <p className="text-xs opacity-60">Recommended: 1280×720, show agent automating a real task</p>
+          <div className="aspect-video">
+            <iframe
+              src="https://drive.google.com/file/d/1pDn3c5FlXPMG39vhuN11cx4P3PjJBvgY/preview"
+              className="w-full h-full"
+              allow="autoplay"
+              allowFullScreen
+            />
           </div>
         </div>
       </section>
@@ -88,7 +94,13 @@ export default function HomePage() {
         <h2 className="text-2xl font-bold text-brand-strong text-center mb-12">What it can do</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {features.map((f) => (
-            <div key={f.title} className="rounded-xl border border-brand-border bg-brand-surface p-6 flex gap-4">
+            <div
+              key={f.title}
+              className={`rounded-xl border p-6 flex gap-4 ${'highlight' in f && f.highlight
+                ? 'border-brand-accent/40 bg-brand-accent/5 md:col-span-2'
+                : 'border-brand-border bg-brand-surface'
+              }`}
+            >
               <div className="shrink-0 w-10 h-10 rounded-lg bg-brand-accent/10 flex items-center justify-center text-brand-accent">
                 <f.icon size={20} />
               </div>

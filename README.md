@@ -1,52 +1,81 @@
-# Claw-a-thon Browser Agent
+# Browser Agent
 
-**[Trang chủ & Hướng dẫn cài đặt →](https://endpoint-27165b8c-a455-4662-a014-7b1fdc133186.agentbase-runtime.aiplatform.vngcloud.vn)**
+**[Website & Installation Guide →](https://endpoint-27165b8c-a455-4662-a014-7b1fdc133186.agentbase-runtime.aiplatform.vngcloud.vn)**
 
-Chrome extension biến trình duyệt thành một AI agent có thể nhận lệnh bằng ngôn ngữ tự nhiên và tự thực hiện các tác vụ — điều hướng, click, điền form, chụp màn hình, quản lý tab, đọc nội dung trang, và hơn 75 browser tool khác.
+A Chrome extension that turns your browser into an AI agent — controlled by natural language, powered by any LLM, and uniquely capable of using **tools exposed by the websites you visit**.
 
-### Dùng qua Chat UI
+### Website-Provided Tools
 
-Mở side panel của extension, nhập yêu cầu bằng tiếng Việt hay tiếng Anh — agent tự suy luận và thực hiện từng bước, stream kết quả trực tiếp. Hỗ trợ Anthropic, OpenAI, và bất kỳ provider nào tương thích OpenAI API (VNGCloud, OpenRouter, v.v.).
+The standout feature: any website can register custom MCP tools that the agent picks up automatically. Add one script tag, declare your tools — and the agent gains domain-specific actions beyond its built-in browser toolkit.
 
-### Dùng qua MCP client (Cursor, Claude Desktop, ...)
+```html
+<!-- Add to your website -->
+<script src="https://unpkg.com/@mcp-b/webmcp-polyfill@latest/dist/index.iife.js"></script>
+<script>
+navigator.modelContext.registerTool({
+  name: "submit-order",
+  description: "Submit the current shopping cart order",
+  inputSchema: { type: "object", properties: {} },
+  async execute() {
+    document.querySelector('#checkout-btn').click();
+    return { content: [{ type: "text", text: "Order submitted" }] };
+  }
+});
+</script>
+```
 
-**native-server** expose một MCP Streamable HTTP endpoint — cho phép bất kỳ MCP client nào trên máy người dùng kết nối vào và điều khiển trình duyệt Chrome đang mở, không cần thêm cài đặt nào khác.
+The extension detects registered tools from every open tab and makes them available to the agent alongside its ~75 built-in browser tools.
+
+### Built-in Browser Tools
+
+Navigate pages, click elements, fill forms, take screenshots, manage tabs, read page content, access bookmarks, history, downloads — over 75 tools grouped by capability. High-risk tools (cookies, localStorage, execute script) are off by default and must be enabled manually.
+
+### Use via Chat UI
+
+Open the extension side panel, type in any language — the agent reasons step-by-step, streams results in real time. Supports Anthropic, OpenAI, and any OpenAI-compatible provider (VNGCloud, OpenRouter, etc.).
+
+### Use via MCP Clients (Cursor, Claude Desktop, …)
+
+The **native-server** exposes a standard MCP Streamable HTTP endpoint. Any MCP-compatible client can connect and control the active Chrome browser.
 
 ```json
-// Cursor / Claude Desktop mcp config
 {
   "mcpServers": {
     "browser-agent": {
-      "url": "http://localhost:8080/mcp",
+      "type": "http",
+      "url": "https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp",
       "headers": { "Authorization": "Bearer <your-token>" }
     }
   }
 }
 ```
 
-### Bảo mật
+### Security
 
-Mọi request đến native-server đều yêu cầu Bearer token — không có token hợp lệ thì bị chặn, kể cả từ localhost. Token có thể cấu hình tĩnh qua `AUTH_TOKEN` / `AUTH_TOKENS` trong `.env`, hoặc quản lý động (thêm / xóa / bật / tắt) qua tab **Tokens** trong extension mà không cần restart server. Các browser tool có nguy cơ cao (cookies, localStorage, lịch sử, download, execute script...) mặc định bị tắt và phải bật thủ công.
+Every request to native-server requires a Bearer token. Tokens can be statically configured via `AUTH_TOKEN` / `AUTH_TOKENS` in `.env`, or managed dynamically (create / revoke / disable) from the extension's **Security** tab without restarting the server.
 
 ---
 
-## Cài đặt nhanh
+## Quick Start
 
-Truy cập **[trang chủ](https://endpoint-27165b8c-a455-4662-a014-7b1fdc133186.agentbase-runtime.aiplatform.vngcloud.vn)** để tải extension và xem hướng dẫn cài đặt từng bước.
+Visit the **[website](https://endpoint-27165b8c-a455-4662-a014-7b1fdc133186.agentbase-runtime.aiplatform.vngcloud.vn)** for the step-by-step installation guide and demo video.
 
-Hoặc tải trực tiếp bản mới nhất tại [GitHub Releases](https://github.com/newhalo/claw-a-thon-browser-agent/releases/latest), giải nén rồi load folder `dist/chrome-mv3/` vào Chrome qua `chrome://extensions` → **Load unpacked**.
+Or grab the latest release from [GitHub Releases](https://github.com/newhalo/claw-a-thon-browser-agent/releases/latest), unzip, then load the folder into Chrome via `chrome://extensions` → **Load unpacked**.
+
+---
 
 ## Docs
 
-- [Mô tả Agent](docs/agent-description.md) — Agent giải quyết gì, ai dùng, hoạt động ra sao
-- [Hướng dẫn sử dụng Extension](docs/extension-user-guide.md) — Build, load Chrome, cấu hình servers, chat, tools, MCP
-- [Kiến trúc & Handoff](docs/browser-agent-handoff.md) — Chi tiết kỹ thuật toàn hệ thống
+- [Extension User Guide](docs/extension-user-guide.md) — build, configure, chat, tools, MCP clients, website integration
+- [Agent Description](docs/agent-description.md) — what the agent does, who it's for, how it works
+- [Architecture & Handoff](docs/browser-agent-handoff.md) — full technical details
 
 ## Packages
 
-| Package | Mô tả |
-|---------|-------|
-| [`packages/chrome-extension`](packages/chrome-extension/README.md) | Chrome Extension (WXT, React) |
+| Package | Description |
+|---------|-------------|
+| [`packages/chrome-extension`](packages/chrome-extension/README.md) | Chrome Extension (WXT, React, MV3) |
 | [`packages/agent-service`](packages/agent-service/README.md) | LLM orchestration backend |
-| [`packages/native-server`](packages/native-server/README.md) | MCP gateway (authenticated) |
+| [`packages/native-server`](packages/native-server/README.md) | MCP gateway (authenticated HTTP) |
 | [`packages/WebMCP`](packages/WebMCP) | WebMCP protocol library |
+| [`packages/extension-website`](packages/extension-website/README.md) | Documentation website (Next.js) |

@@ -1315,8 +1315,14 @@ function SecurityTab() {
   const [newToken, setNewToken] = useState<CreatedToken | null>(null);
   const [copied, setCopied] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [nativeServerUrl, setNativeServerUrl] = useState('');
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    chrome.runtime.sendMessage({ type: 'GET_CONFIG' }, (r) => {
+      if (r?.config?.nativeServerUrl) setNativeServerUrl(r.config.nativeServerUrl);
+    });
+  }, []);
 
   const load = () => {
     setLoading(true);
@@ -1389,7 +1395,7 @@ function SecurityTab() {
           </div>
           <div>
             <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, fontWeight: 600 }}>Cursor MCP config:</p>
-            <pre style={{ padding: '10px 12px', borderRadius: 7, background: '#1e1e2e', color: '#cdd6f4', fontSize: 11, fontFamily: 'monospace', overflowX: 'auto', whiteSpace: 'pre' }}>{JSON.stringify({ webmcp: { type: 'http', url: 'http://127.0.0.1:18080/mcp', headers: { Authorization: `Bearer ${newToken.token}` } } }, null, 2)}</pre>
+            <pre style={{ padding: '10px 12px', borderRadius: 7, background: '#1e1e2e', color: '#cdd6f4', fontSize: 11, fontFamily: 'monospace', overflowX: 'auto', whiteSpace: 'pre' }}>{JSON.stringify({ "browser-agent": { type: 'http', description: 'Browser Agent — control Chrome with AI', url: `${(nativeServerUrl || 'http://127.0.0.1:18080').replace(/\/$/, '')}/mcp`, headers: { Authorization: `Bearer ${newToken.token}` } } }, null, 2)}</pre>
           </div>
         </div>
       )}

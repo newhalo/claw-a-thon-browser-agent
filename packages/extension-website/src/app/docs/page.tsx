@@ -64,6 +64,7 @@ const toc = [
   { id: 'agent-service', label: 'Agent Service' },
   { id: 'extension-config', label: 'Extension Config' },
   { id: 'mcp-clients', label: 'Connect MCP Clients' },
+  { id: 'website-tools', label: 'Website Tool Integration' },
   { id: 'mcp-tools', label: 'MCP Tools Reference' },
   { id: 'faq', label: 'FAQ' },
 ];
@@ -98,8 +99,22 @@ export default function DocsPage() {
         {/* ── Architecture ── */}
         <Section id="architecture" title="Architecture">
           <p className="text-brand-muted text-sm mb-6">
-            Browser Agent is a three-component system. Each component has a single clear responsibility.
+            Browser Agent has three core components — plus a unique capability: websites can expose their own tools to the agent via the <strong className="text-brand-strong">WebMCP protocol</strong>.
           </p>
+
+          {/* Website-provided tools highlight */}
+          <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-5 mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-purple-400 font-bold text-sm">🌐 Website-Provided Tools</span>
+              <span className="text-xs text-brand-muted border border-brand-border rounded px-1.5 py-0.5">Key Feature</span>
+            </div>
+            <p className="text-xs text-brand-muted mb-3">
+              Any website can register custom MCP tools using the WebMCP polyfill. The extension background worker reads these tools from open tabs and injects them into every agent request — alongside the ~75 built-in browser tools.
+            </p>
+            <p className="text-xs text-brand-muted">
+              This means a web app can give the agent <em>domain-specific actions</em> it couldn&apos;t otherwise know: &quot;submit this order&quot;, &quot;export this report&quot;, &quot;apply this filter&quot; — implemented by the site itself.
+            </p>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
             {[
@@ -109,7 +124,8 @@ export default function DocsPage() {
                 color: 'text-brand-accent',
                 items: [
                   'Side panel chat UI',
-                  'Executes ~75 browser tools',
+                  'Executes ~75 built-in browser tools',
+                  'Collects website-provided tools from open tabs',
                   'Long-polls native-server for tool requests',
                   'Options page: settings & token management',
                 ],
@@ -132,6 +148,7 @@ export default function DocsPage() {
                 items: [
                   'Receives chat from extension side panel',
                   'MCP client → calls tools via native-server',
+                  'Sees all tools: built-in + website-provided',
                   'Short-term memory (in-memory)',
                   'Long-term memory (SQLite + FTS5 + vectors)',
                 ],
@@ -155,11 +172,16 @@ export default function DocsPage() {
           </div>
 
           <MermaidDiagram
-            caption="System components and their connections"
+            caption="Website tools flow into the extension alongside built-in browser tools"
             chart={`graph TB
+  subgraph web_g["🌐 Open Website (any tab)"]
+    POLYFILL["WebMCP Polyfill\\nnavigator.modelContext"]
+    WTOOL["registerTool()\\ncustom domain actions"]
+  end
+
   subgraph ext_g["🧩 Chrome Extension (MV3)"]
     UI["Side Panel · Chat UI"]
-    BG["Background Worker · ~75 browser tools"]
+    BG["Background Worker\\n~75 built-in + website tools"]
     OPT["Options Page · Settings & Tokens"]
   end
 
@@ -180,6 +202,8 @@ export default function DocsPage() {
     CLAUDE["Claude Desktop"]
   end
 
+  POLYFILL --> WTOOL
+  WTOOL -->|"WebMCP protocol"| BG
   UI -->|"POST /chat"| CHAT
   CHAT --> LLM
   LLM --> MEM
@@ -419,7 +443,7 @@ node server.js`} />
               On first open, the extension shows a setup wizard. Fill in:
             </p>
             <ol className="space-y-2 text-sm text-brand-muted list-decimal list-inside">
-              <li><span className="text-brand-strong font-medium">Native Server URL</span> — e.g. <code>http://localhost:8080</code> or the AgentBase endpoint URL</li>
+              <li><span className="text-brand-strong font-medium">Native Server URL</span> — e.g. <code>https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp</code></li>
               <li><span className="text-brand-strong font-medium">Auth Token</span> — must match <code>AUTH_TOKEN</code> in native-server&apos;s <code>.env</code></li>
               <li><span className="text-brand-strong font-medium">LLM Provider</span> — choose Anthropic, OpenAI, or any OpenAI-compatible endpoint</li>
             </ol>
@@ -443,12 +467,7 @@ node server.js`} />
             </div>
           </SubSection>
 
-          {/* Options screenshot placeholder */}
-          <div className="rounded-xl border-2 border-dashed border-brand-border bg-brand-surface/50 h-52 flex flex-col items-center justify-center gap-2 text-brand-muted mt-4">
-            <span className="text-3xl">📸</span>
-            <p className="text-sm font-medium">[ Screenshot: Options page — Security tab ]</p>
-            <p className="text-xs opacity-60">Save as: public/screenshots/options-security.png</p>
-          </div>
+          <img src="/screenshots/options-security.png" alt="Options page — Security tab" className="rounded-lg w-full border border-brand-border mt-4" />
         </Section>
 
         {/* ── Connect MCP Clients ── */}
@@ -499,12 +518,7 @@ node server.js`} />
               </li>
             </ol>
 
-            {/* Security tab screenshot placeholder */}
-            <div className="rounded-xl border-2 border-dashed border-brand-border bg-brand-surface/50 aspect-video flex flex-col items-center justify-center gap-2 text-brand-muted">
-              <span className="text-3xl">📸</span>
-              <p className="text-sm font-medium">[ Screenshot: Security tab — token creation + copy UI ]</p>
-              <p className="text-xs opacity-60">Save as: public/screenshots/security-new-token.png</p>
-            </div>
+            <img src="/screenshots/security-new-token.png" alt="Security tab — token creation + copy UI" className="rounded-lg w-full border border-brand-border" />
           </SubSection>
 
           <SubSection title="Step 2 — Configure your MCP client">
@@ -520,7 +534,7 @@ node server.js`} />
   "mcpServers": {
     "browser-agent": {
       "type": "http",
-      "url": "http://127.0.0.1:8080/mcp",
+      "url": "https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp",
       "headers": {
         "Authorization": "Bearer <your-token>"
       }
@@ -542,7 +556,7 @@ node server.js`} />
   "mcpServers": {
     "browser-agent": {
       "type": "http",
-      "url": "http://127.0.0.1:8080/mcp",
+      "url": "https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp",
       "headers": {
         "Authorization": "Bearer <your-token>"
       }
@@ -555,9 +569,9 @@ node server.js`} />
               <div className="rounded-lg border border-brand-border bg-brand-surface/50 p-4">
                 <p className="text-brand-strong font-medium text-sm mb-2">Using the cloud (AgentBase) endpoint</p>
                 <p className="text-brand-muted text-xs mb-3">
-                  If native-server is deployed to AgentBase, replace <code>http://127.0.0.1:8080</code> with the AgentBase endpoint URL:
+                  The native-server is deployed on AgentBase. Use the endpoint URL below:
                 </p>
-                <CodeBlock code={`"url": "https://endpoint-<id>.agentbase-runtime.aiplatform.vngcloud.vn/mcp"`} />
+                <CodeBlock code={`"url": "https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp"`} />
                 <p className="text-xs text-brand-muted mt-2">
                   The token-based auth works identically for local and cloud deployments.
                 </p>
@@ -568,17 +582,112 @@ node server.js`} />
           <SubSection title="Verify the connection">
             <p className="text-brand-muted text-xs mb-3">Test the MCP handshake with curl:</p>
             <CodeBlock code={`# Initialize session
-curl -X POST http://localhost:8080/mcp \\
+curl -X POST https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp \\
   -H "Authorization: Bearer <your-token>" \\
   -H "Content-Type: application/json" \\
   -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test","version":"1.0"}},"id":1}'
 
 # Save mcp-session-id from response header, then list tools:
-curl -X POST http://localhost:8080/mcp \\
+curl -X POST https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-runtime.aiplatform.vngcloud.vn/mcp \\
   -H "Authorization: Bearer <your-token>" \\
   -H "Content-Type: application/json" \\
   -H "mcp-session-id: <session-id>" \\
   -d '{"jsonrpc":"2.0","method":"tools/list","id":2}'`} />
+          </SubSection>
+        </Section>
+
+        {/* ── Website Tool Integration ── */}
+        <Section id="website-tools" title="Website Tool Integration">
+          <p className="text-brand-muted text-sm mb-6">
+            Any website can expose custom MCP tools to the agent using the <strong className="text-brand-strong">WebMCP polyfill</strong>.
+            The extension background worker reads these tools from every open tab and makes them available alongside
+            the ~75 built-in browser tools — no extension configuration needed.
+          </p>
+
+          <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-4 mb-6 text-sm text-brand-muted">
+            <strong className="text-purple-400">Why this matters:</strong> Built-in browser tools are generic —
+            click, navigate, fill. Website tools are <em>domain-specific</em>: &quot;submit order&quot;, &quot;export report&quot;,
+            &quot;apply discount code&quot;. Your site implements them; the agent calls them.
+          </div>
+
+          <SubSection title="Quick start (any HTML page)">
+            <p className="text-brand-muted text-xs mb-3">
+              No build tools required. Add two script tags to your page:
+            </p>
+            <CodeBlock code={`<!-- Step 1: load the polyfill -->
+<script src="https://unpkg.com/@mcp-b/webmcp-polyfill@latest/dist/index.iife.js"></script>
+
+<!-- Step 2: register your tools -->
+<script>
+navigator.modelContext.registerTool({
+  name: "submit-order",
+  description: "Submit the current shopping cart order",
+  inputSchema: { type: "object", properties: {} },
+  async execute() {
+    document.querySelector('#checkout-btn').click();
+    return { content: [{ type: "text", text: "Order submitted" }] };
+  }
+});
+</script>`} />
+          </SubSection>
+
+          <SubSection title="Tool with input parameters">
+            <CodeBlock code={`navigator.modelContext.registerTool({
+  name: "apply-filter",
+  description: "Filter the product list by category",
+  inputSchema: {
+    type: "object",
+    properties: {
+      category: { type: "string", description: "Product category to filter by" }
+    },
+    required: ["category"]
+  },
+  async execute({ category }) {
+    document.querySelector(\`[data-category="\${category}"]\`).click();
+    return { content: [{ type: "text", text: \`Filtered by: \${category}\` }] };
+  }
+});`} />
+          </SubSection>
+
+          <SubSection title="React / framework example">
+            <CodeBlock code={`import { useEffect } from 'react';
+
+function useAgentTool(name, description, schema, execute) {
+  useEffect(() => {
+    if (!navigator.modelContext) return;
+    navigator.modelContext.registerTool({ name, description, inputSchema: schema, execute });
+  }, []);
+}
+
+// In your component:
+useAgentTool(
+  "export-data",
+  "Export the current table as CSV",
+  { type: "object", properties: {} },
+  async () => {
+    const csv = generateCSV(tableData);
+    downloadFile(csv, "export.csv");
+    return { content: [{ type: "text", text: "CSV exported" }] };
+  }
+);`} />
+          </SubSection>
+
+          <SubSection title="Response format">
+            <p className="text-brand-muted text-xs mb-3">All tool execute functions must return this shape:</p>
+            <CodeBlock code={`return {
+  content: [
+    { type: "text", text: "Your result message" }
+  ]
+};`} />
+          </SubSection>
+
+          <SubSection title="Verify your tools">
+            <p className="text-brand-muted text-xs mb-3">Open the browser console on your page:</p>
+            <CodeBlock code={`// List registered tools
+navigator.modelContextTesting.listTools();
+
+// Execute a tool manually
+navigator.modelContextTesting.executeTool("submit-order", "{}");`} />
           </SubSection>
         </Section>
 
