@@ -5,10 +5,11 @@ WORKDIR /app
 RUN corepack enable pnpm
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install
+RUN pnpm install --prod
 
-COPY . .
-RUN pnpm build
+COPY .next/standalone ./
+COPY .next/static ./.next/static
+COPY public ./public
 
 FROM node:20-slim
 
@@ -18,9 +19,7 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV HOSTNAME=0.0.0.0
 
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
+COPY --from=builder /app ./
 
 EXPOSE 8080
 
