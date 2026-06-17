@@ -64,6 +64,7 @@ const toc = [
   { id: 'agent-service', label: 'Agent Service' },
   { id: 'extension-config', label: 'Extension Config' },
   { id: 'mcp-clients', label: 'Connect MCP Clients' },
+  { id: 'website-tools', label: 'Website Tool Integration' },
   { id: 'mcp-tools', label: 'MCP Tools Reference' },
   { id: 'faq', label: 'FAQ' },
 ];
@@ -98,8 +99,22 @@ export default function DocsPage() {
         {/* ── Architecture ── */}
         <Section id="architecture" title="Architecture">
           <p className="text-brand-muted text-sm mb-6">
-            Browser Agent is a three-component system. Each component has a single clear responsibility.
+            Browser Agent has three core components — plus a unique capability: websites can expose their own tools to the agent via the <strong className="text-brand-strong">WebMCP protocol</strong>.
           </p>
+
+          {/* Website-provided tools highlight */}
+          <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-5 mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-purple-400 font-bold text-sm">🌐 Website-Provided Tools</span>
+              <span className="text-xs text-brand-muted border border-brand-border rounded px-1.5 py-0.5">Key Feature</span>
+            </div>
+            <p className="text-xs text-brand-muted mb-3">
+              Any website can register custom MCP tools using the WebMCP polyfill. The extension background worker reads these tools from open tabs and injects them into every agent request — alongside the ~75 built-in browser tools.
+            </p>
+            <p className="text-xs text-brand-muted">
+              This means a web app can give the agent <em>domain-specific actions</em> it couldn&apos;t otherwise know: &quot;submit this order&quot;, &quot;export this report&quot;, &quot;apply this filter&quot; — implemented by the site itself.
+            </p>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
             {[
@@ -109,7 +124,8 @@ export default function DocsPage() {
                 color: 'text-brand-accent',
                 items: [
                   'Side panel chat UI',
-                  'Executes ~75 browser tools',
+                  'Executes ~75 built-in browser tools',
+                  'Collects website-provided tools from open tabs',
                   'Long-polls native-server for tool requests',
                   'Options page: settings & token management',
                 ],
@@ -132,6 +148,7 @@ export default function DocsPage() {
                 items: [
                   'Receives chat from extension side panel',
                   'MCP client → calls tools via native-server',
+                  'Sees all tools: built-in + website-provided',
                   'Short-term memory (in-memory)',
                   'Long-term memory (SQLite + FTS5 + vectors)',
                 ],
@@ -155,11 +172,16 @@ export default function DocsPage() {
           </div>
 
           <MermaidDiagram
-            caption="System components and their connections"
+            caption="Website tools flow into the extension alongside built-in browser tools"
             chart={`graph TB
+  subgraph web_g["🌐 Open Website (any tab)"]
+    POLYFILL["WebMCP Polyfill\\nnavigator.modelContext"]
+    WTOOL["registerTool()\\ncustom domain actions"]
+  end
+
   subgraph ext_g["🧩 Chrome Extension (MV3)"]
     UI["Side Panel · Chat UI"]
-    BG["Background Worker · ~75 browser tools"]
+    BG["Background Worker\\n~75 built-in + website tools"]
     OPT["Options Page · Settings & Tokens"]
   end
 
@@ -180,6 +202,8 @@ export default function DocsPage() {
     CLAUDE["Claude Desktop"]
   end
 
+  POLYFILL --> WTOOL
+  WTOOL -->|"WebMCP protocol"| BG
   UI -->|"POST /chat"| CHAT
   CHAT --> LLM
   LLM --> MEM
@@ -569,6 +593,101 @@ curl -X POST https://endpoint-9f4b684b-2170-44f7-b9c4-de52e96a75c0.agentbase-run
   -H "Content-Type: application/json" \\
   -H "mcp-session-id: <session-id>" \\
   -d '{"jsonrpc":"2.0","method":"tools/list","id":2}'`} />
+          </SubSection>
+        </Section>
+
+        {/* ── Website Tool Integration ── */}
+        <Section id="website-tools" title="Website Tool Integration">
+          <p className="text-brand-muted text-sm mb-6">
+            Any website can expose custom MCP tools to the agent using the <strong className="text-brand-strong">WebMCP polyfill</strong>.
+            The extension background worker reads these tools from every open tab and makes them available alongside
+            the ~75 built-in browser tools — no extension configuration needed.
+          </p>
+
+          <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-4 mb-6 text-sm text-brand-muted">
+            <strong className="text-purple-400">Why this matters:</strong> Built-in browser tools are generic —
+            click, navigate, fill. Website tools are <em>domain-specific</em>: &quot;submit order&quot;, &quot;export report&quot;,
+            &quot;apply discount code&quot;. Your site implements them; the agent calls them.
+          </div>
+
+          <SubSection title="Quick start (any HTML page)">
+            <p className="text-brand-muted text-xs mb-3">
+              No build tools required. Add two script tags to your page:
+            </p>
+            <CodeBlock code={`<!-- Step 1: load the polyfill -->
+<script src="https://unpkg.com/@mcp-b/webmcp-polyfill@latest/dist/index.iife.js"></script>
+
+<!-- Step 2: register your tools -->
+<script>
+navigator.modelContext.registerTool({
+  name: "submit-order",
+  description: "Submit the current shopping cart order",
+  inputSchema: { type: "object", properties: {} },
+  async execute() {
+    document.querySelector('#checkout-btn').click();
+    return { content: [{ type: "text", text: "Order submitted" }] };
+  }
+});
+</script>`} />
+          </SubSection>
+
+          <SubSection title="Tool with input parameters">
+            <CodeBlock code={`navigator.modelContext.registerTool({
+  name: "apply-filter",
+  description: "Filter the product list by category",
+  inputSchema: {
+    type: "object",
+    properties: {
+      category: { type: "string", description: "Product category to filter by" }
+    },
+    required: ["category"]
+  },
+  async execute({ category }) {
+    document.querySelector(\`[data-category="\${category}"]\`).click();
+    return { content: [{ type: "text", text: \`Filtered by: \${category}\` }] };
+  }
+});`} />
+          </SubSection>
+
+          <SubSection title="React / framework example">
+            <CodeBlock code={`import { useEffect } from 'react';
+
+function useAgentTool(name, description, schema, execute) {
+  useEffect(() => {
+    if (!navigator.modelContext) return;
+    navigator.modelContext.registerTool({ name, description, inputSchema: schema, execute });
+  }, []);
+}
+
+// In your component:
+useAgentTool(
+  "export-data",
+  "Export the current table as CSV",
+  { type: "object", properties: {} },
+  async () => {
+    const csv = generateCSV(tableData);
+    downloadFile(csv, "export.csv");
+    return { content: [{ type: "text", text: "CSV exported" }] };
+  }
+);`} />
+          </SubSection>
+
+          <SubSection title="Response format">
+            <p className="text-brand-muted text-xs mb-3">All tool execute functions must return this shape:</p>
+            <CodeBlock code={`return {
+  content: [
+    { type: "text", text: "Your result message" }
+  ]
+};`} />
+          </SubSection>
+
+          <SubSection title="Verify your tools">
+            <p className="text-brand-muted text-xs mb-3">Open the browser console on your page:</p>
+            <CodeBlock code={`// List registered tools
+navigator.modelContextTesting.listTools();
+
+// Execute a tool manually
+navigator.modelContextTesting.executeTool("submit-order", "{}");`} />
           </SubSection>
         </Section>
 

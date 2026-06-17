@@ -119,12 +119,37 @@ export function ArchDiagram() {
     <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, overflow: 'auto', transition: 'background 0.2s, border-color 0.2s' }}>
       <div style={{ minWidth: 680 }}>
 
+        {/* ── Row 0: Open Websites → Extension (highlight) ── */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
+          <Group emoji="🌐" title="Open Website" color="purple" C={C}>
+            <Item label="WebMCP Polyfill" sub="navigator.modelContext" color="purple" C={C} />
+            <Item label="Custom Tools" sub="registerTool() — any domain logic" color="purple" C={C} />
+          </Group>
+
+          <HArrow label="tools via WebMCP" color="purple" C={C} />
+
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingTop: 28 }}>
+            <div style={{
+              background: C.purple.bg, border: `1px dashed ${C.purple.border}`,
+              borderRadius: 8, padding: '8px 14px', fontSize: 10, color: C.purple.hex, lineHeight: 1.6,
+            }}>
+              Extension background worker reads tools from every open tab.<br />
+              Website tools appear alongside built-in browser tools in every request.
+            </div>
+          </div>
+        </div>
+
+        {/* ── vertical arrow down to extension ── */}
+        <div style={{ display: 'flex', paddingLeft: 20, marginBottom: 4 }}>
+          <VArrow label="injected into agent context" color="purple" C={C} />
+        </div>
+
         {/* ── Row 1: Extension → Agent Service → Native Server ── */}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
 
           <Group emoji="🧩" title="Chrome Extension" color="accent" C={C}>
             <Item label="Side Panel" sub="Chat UI" color="accent" C={C} />
-            <Item label="Background Worker" sub="~75 browser tools" color="accent" C={C} />
+            <Item label="Background Worker" sub="~75 browser tools + website tools" color="accent" C={C} />
             <Item label="Options Page" sub="Settings & Tokens" color="muted" C={C} />
           </Group>
 
@@ -156,10 +181,10 @@ export function ArchDiagram() {
 
         {/* ── Row 3: MCP Clients at bottom right ── */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-          <Group emoji="🖥️" title="MCP Clients" color="purple" C={C}>
+          <Group emoji="🖥️" title="MCP Clients" color="muted" C={C}>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Item label="Cursor IDE" color="purple" C={C} />
-              <Item label="Claude Desktop" color="purple" C={C} />
+              <Item label="Cursor IDE" color="muted" C={C} />
+              <Item label="Claude Desktop" color="muted" C={C} />
               <Item label="Any MCP client" color="muted" C={C} />
             </div>
             <div style={{ textAlign: 'center' }}>
@@ -171,7 +196,7 @@ export function ArchDiagram() {
       </div>
 
       <p style={{ textAlign: 'center', fontSize: 10, color: C.caption, marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
-        Extension registers its tools on startup · MCP clients can connect directly without agent-service
+        Websites expose tools via WebMCP · Extension merges them with ~75 built-in tools · MCP clients connect without agent-service
       </p>
     </div>
   );
