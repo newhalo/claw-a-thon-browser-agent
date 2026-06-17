@@ -476,6 +476,7 @@ server.listen(PORT, HOST, () => {
   console.log(`[agent-service] MCP server: ${getMcpConfig().url}`);
 });
 
+server.on('connection', (socket) => { socket.setNoDelay(true); });
 server.on('error', (err) => { console.error('[agent-service] Server error:', err); process.exit(1); });
 
 process.on('unhandledRejection', (reason) => {

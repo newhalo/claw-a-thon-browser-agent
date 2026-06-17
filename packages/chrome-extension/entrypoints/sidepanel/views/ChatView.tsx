@@ -697,6 +697,9 @@ export default function ChatView({ onOpenSettings }: Props) {
             });
           }
         }
+        // Yield to the browser event loop after each network chunk so React
+        // can flush the batched state updates and repaint before the next chunk.
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') return;

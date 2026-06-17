@@ -1,6 +1,6 @@
 {
   "name": "claw-a-thon-agent-service",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Agent service backend for Claw-a-thon Chat Agent — handles LLM orchestration, MCP tool routing, and memory",
   "private": true,
   "type": "module",

@@ -66,6 +66,19 @@ function ConnectionStep({ onDone }: { onDone: (url: string, token: string, healt
         return;
       }
 
+      if (h.authRequired && token.trim()) {
+        // Verify the token is actually valid by hitting a protected endpoint
+        const verifyRes = await fetch(`${trimmedUrl}/provider-config`, {
+          headers: { 'Authorization': `Bearer ${token.trim()}` },
+          signal: AbortSignal.timeout(3000),
+        }).catch(() => null);
+        if (!verifyRes || verifyRes.status === 401) {
+          setError('Token không hợp lệ. Kiểm tra lại auth token.');
+          setLoading(false);
+          return;
+        }
+      }
+
       // Save agent-service connection config
       await saveAgentServiceConfig({ url: trimmedUrl, token: token.trim() });
 
