@@ -164,8 +164,14 @@ export default defineBackground({
 
     let activeTabId: number | null = null;
 
+    function shortDomain(domain: string): string {
+      // Take last 2 hostname segments to keep name short (e.g. "zalopay_vn" from "qc-events-tool.zalopay.vn")
+      const parts = domain.split('.').filter(Boolean);
+      return sanitize(parts.slice(-2).join('.'));
+    }
+
     function prefixedName(entry: TabEntry, originalName: string): string {
-      return `website_tool_${sanitize(entry.domain)}_tab${entry.tabId}_${sanitize(originalName)}`;
+      return `wt_${shortDomain(entry.domain)}_t${entry.tabId}_${sanitize(originalName)}`;
     }
 
     function registerTabTools(entry: TabEntry) {
@@ -1180,7 +1186,7 @@ export default defineBackground({
 
         try {
           let data: unknown;
-          if (name.startsWith('website_tool_')) {
+          if (name.startsWith('wt_')) {
             const entry = webToolIndex.get(name);
             if (!entry) throw new Error(`Website tool not found: ${name}`);
             data = await executeWebsiteTool(entry.tabId, entry.originalName, args);

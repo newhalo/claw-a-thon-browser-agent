@@ -7,7 +7,7 @@ export default defineConfig({
   manifest: {
     name: isDev ? 'Browser Agent [DEV]' : 'Browser Agent',
     description: 'MCP extension connecting to Claw-a-thon native server',
-    version: '1.0.3',
+    version: '1.0.5',
     manifest_version: 3,
     minimum_chrome_version: '120',
     permissions: [

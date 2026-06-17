@@ -35,10 +35,10 @@ async function repushProviderConfig(agentServiceUrl: string): Promise<boolean> {
   });
 }
 
-/** Strip browser_ / website_tool_{domain}_tab{n}_ prefixes for display */
+/** Strip browser_ / wt_{domain}_t{n}_ prefixes for display */
 function shortToolName(name: string): string {
   if (name.startsWith('browser_')) return name.slice(8).replace(/_/g, ' ');
-  const m = name.match(/^website_tool_[^_]+_tab\d+_(.+)$/);
+  const m = name.match(/^wt_.+_t\d+_(.+)$/) || name.match(/^website_tool_[^_]+_tab\d+_(.+)$/);
   if (m) return m[1].replace(/_/g, ' ');
   return name.replace(/_/g, ' ');
 }
