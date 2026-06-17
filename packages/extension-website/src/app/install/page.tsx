@@ -174,6 +174,23 @@ export default function InstallPage() {
         </div>
       </div>
 
+      {/* Security warning */}
+      <div className="mt-12 rounded-xl border border-yellow-500/40 bg-yellow-500/5 p-6">
+        <div className="flex items-start gap-3">
+          <span className="text-yellow-400 text-xl shrink-0">⚠️</span>
+          <div>
+            <h2 className="font-semibold text-yellow-400 mb-2">Remove the extension after testing</h2>
+            <p className="text-sm text-brand-muted">
+              The extension has broad access to your browser — all open tabs, page content, and navigation.
+              When using a shared test token, anyone holding that token can control your browser remotely.
+              Once you finish evaluating, go to{' '}
+              <code className="text-xs bg-brand-surface px-1 py-0.5 rounded">chrome://extensions</code>{' '}
+              and remove Browser Agent to eliminate this attack surface.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Troubleshooting */}
       <div className="mt-12">
         <h2 className="text-xl font-bold text-brand-strong mb-6">Troubleshooting</h2>
