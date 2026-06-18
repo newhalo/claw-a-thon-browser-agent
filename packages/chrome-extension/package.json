@@ -1,6 +1,6 @@
 {
   "name": "browser-agent-extension",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "MCP Chrome Extension connecting to Claw-a-thon native server with authentication",
   "private": true,
   "type": "module",
@@ -25,6 +25,7 @@
     "@radix-ui/react-popover": "^1.1.16",
     "@radix-ui/react-scroll-area": "^1.2.0",
     "@radix-ui/react-separator": "^1.1.0",
+    "@radix-ui/react-tooltip": "^1.2.10",
     "ai": "^6.0.204",
     "axios": "^1.6.0",
     "lucide-react": "^1.18.0",

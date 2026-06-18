@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import * as Tooltip from '@radix-ui/react-tooltip';
 import {
   getAgentServiceConfig, checkAgentServiceHealthFull,
   pushProviderConfig, pushSystemPrompt,
@@ -6,11 +7,12 @@ import {
   loadCustomSkills, saveCustomSkills, loadDisabledSkills, saveDisabledSkills,
   loadCustomMcpServers, saveCustomMcpServers, pushExternalMcpServers, parseMcpConfigJson, testMcpServer,
   getMemoryConfig, pushMemoryConfig,
-  listModelsFromProvider, listModelsForConfiguredProvider, fetchProviderConfig,
+  listModelsFromProvider, listModelsForConfiguredProvider, fetchProviderConfig, fetchModelCatalog,
   DEFAULT_AGENT_SERVICE_URL,
-  type Skill, type CustomSkill, type CustomMcpServer, type ModelInfo,
+  type Skill, type CustomSkill, type CustomMcpServer, type ModelInfo, type ModelCatalogItem,
 } from '../sidepanel/lib/agentServiceClient';
 import { AgentLogo } from '../sidepanel/components/Icons';
+import ModelSelector from '../sidepanel/components/ModelSelector';
 
 type Tab = 'general' | 'provider' | 'skills' | 'mcp' | 'memory' | 'security';
 
@@ -234,6 +236,9 @@ function ProviderTab() {
   const [switchingModel, setSwitchingModel] = useState(false);
   const [switchMsg, setSwitchMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const [catalogModels, setCatalogModels] = useState<ModelCatalogItem[]>([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(true);
+
   // Add provider form
   const [showAddForm, setShowAddForm] = useState(false);
   const [providerType, setProviderType] = useState<ProviderType>('vngcloud');
@@ -256,12 +261,15 @@ function ProviderTab() {
       checkAgentServiceHealthFull(url).then(h => { if (h?.provider) setStatus(h.provider); });
 
       // Load server config to seed chrome.storage if not yet saved (covers VNGCLOUD env-only setup)
-      const [serverCfg, list] = await Promise.all([
+      const [serverCfg, list, catalog] = await Promise.all([
         fetchProviderConfig(url),
         listModelsForConfiguredProvider(url),
+        fetchModelCatalog(url),
       ]);
       setCurrentModels(list);
+      setCatalogModels(catalog);
       setLoadingCurrentModels(false);
+      setLoadingCatalog(false);
 
       chrome.storage.sync.get(['agentProviderConfig'], r => {
         const saved = r.agentProviderConfig ?? {};
@@ -399,37 +407,22 @@ function ProviderTab() {
 
       {/* Model selector for current provider */}
       {!loadingCurrentModels && currentModels.length > 0 && (() => {
-        const chatModels = currentModels.filter(m => isChatModel(m) && isEnabled(m));
         const embeddingModels = currentModels.filter(m => isEmbeddingModel(m) && isEnabled(m));
         return (
           <div style={{ ...formCardStyle, marginBottom: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Model đang dùng</div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-              <div style={{ flex: 1 }}>
-                <select value={currentModelId} onChange={e => setCurrentModelId(e.target.value)} style={inputStyle}>
-                  {chatModels.length > 0
-                    ? chatModels.map(m => (
-                        <option key={m.id} value={m.id}>
-                          {m.id}{m.model_type ? ` [${MODEL_TYPE_LABEL[m.model_type] ?? m.model_type}]` : ''}
-                        </option>
-                      ))
-                    : currentModels.filter(isEnabled).map(m => <option key={m.id} value={m.id}>{m.id}</option>)
-                  }
-                </select>
-              </div>
+            <ModelSelector
+              liveModels={currentModels}
+              catalog={catalogModels}
+              activeModelId={currentModelId}
+              onSelect={setCurrentModelId}
+              loading={loadingCatalog}
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
               <button type="button" onClick={saveModelSwitch} disabled={switchingModel} style={{ ...btnStyle, flexShrink: 0 }}>
                 {switchingModel ? 'Đang lưu…' : 'Apply'}
               </button>
             </div>
-            {/* Show selected model's type badge */}
-            {currentModelId && (() => {
-              const sel = currentModels.find(m => m.id === currentModelId);
-              return sel?.model_type ? (
-                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>
-                  Loại: <ModelTypeBadge type={sel.model_type} />
-                </div>
-              ) : null;
-            })()}
             <Msg msg={switchMsg} />
 
             <div style={{ marginTop: 14 }}>
@@ -533,13 +526,14 @@ function ProviderTab() {
             </div>
             <Msg msg={fetchMsg} />
             {fetchedModels.length > 0 ? (
-              <select value={addSelectedModel} onChange={e => setAddSelectedModel(e.target.value)} style={{ ...inputStyle, marginTop: 6 }}>
-                {fetchedModels.filter(m => isChatModel(m) && isEnabled(m)).map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.id}{m.model_type ? ` [${MODEL_TYPE_LABEL[m.model_type] ?? m.model_type}]` : ''}
-                  </option>
-                ))}
-              </select>
+              <div style={{ marginTop: 6 }}>
+                <ModelSelector
+                  liveModels={fetchedModels}
+                  catalog={catalogModels}
+                  activeModelId={addSelectedModel}
+                  onSelect={setAddSelectedModel}
+                />
+              </div>
             ) : (
               <input
                 style={{ ...inputStyle, marginTop: fetchMsg ? 6 : 0 }}
@@ -1468,6 +1462,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('general');
 
   return (
+    <Tooltip.Provider delayDuration={300}>
     <div style={{
       display: 'flex', width: '100%', minHeight: '100vh',
       background: 'var(--bg-secondary)',
@@ -1513,5 +1508,6 @@ export default function App() {
         {tab === 'security' && <SecurityTab />}
       </main>
     </div>
+    </Tooltip.Provider>
   );
 }

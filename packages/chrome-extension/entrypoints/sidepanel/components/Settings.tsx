@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { getAgentServiceConfig, checkAgentServiceHealthFull, pushProviderConfig, pushNativeConfigToAgentService, pushSystemPrompt, fetchModels, fetchSkills, fetchSkillFromUrl, loadCustomSkills, saveCustomSkills, loadDisabledSkills, saveDisabledSkills, type PredefinedModel, type Skill, type CustomSkill } from '../lib/agentServiceClient';
+import { getAgentServiceConfig, checkAgentServiceHealthFull, pushProviderConfig, pushNativeConfigToAgentService, pushSystemPrompt, fetchModels, fetchModelCatalog, listModelsForConfiguredProvider, fetchSkills, fetchSkillFromUrl, loadCustomSkills, saveCustomSkills, loadDisabledSkills, saveDisabledSkills, type PredefinedModel, type ModelCatalogItem, type ModelInfo, type Skill, type CustomSkill } from '../lib/agentServiceClient';
 import TokensPanel from './TokensPanel';
+import ModelSelector from './ModelSelector';
 
 interface SettingsProps {
   onConfigSaved: () => void;
@@ -30,6 +31,9 @@ function Settings({ onConfigSaved }: SettingsProps) {
   const [showProviderForm, setShowProviderForm] = useState(false);
   const [providerStatus, setProviderStatus] = useState<{ configured: boolean; provider?: string | null; model?: string | null } | null>(null);
   const [models, setModels] = useState<PredefinedModel[]>([]);
+  const [catalogModels, setCatalogModels] = useState<ModelCatalogItem[]>([]);
+  const [liveModels, setLiveModels] = useState<ModelInfo[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [providerSaving, setProviderSaving] = useState(false);
@@ -47,6 +51,11 @@ function Settings({ onConfigSaved }: SettingsProps) {
         if (def) setSelectedModelId(prev => prev || def.id);
       });
       fetchSkills(url).then(setBuiltinSkills);
+      // Pre-load catalog for model selector
+      Promise.all([fetchModelCatalog(url), listModelsForConfiguredProvider(url)]).then(([cat, live]) => {
+        setCatalogModels(cat);
+        setLiveModels(live);
+      });
     });
     loadCustomSkills().then(setCustomSkills);
     loadDisabledSkills().then(setDisabledSkills);
@@ -182,8 +191,11 @@ function Settings({ onConfigSaved }: SettingsProps) {
     e.preventDefault();
     setProviderMsg(null);
     if (!apiKey.trim()) { setProviderMsg({ type: 'error', text: 'API key là bắt buộc' }); return; }
+    if (!selectedModelId) { setProviderMsg({ type: 'error', text: 'Chọn model trước' }); return; }
+
+    // Try PredefinedModel first (for non-vngcloud), then fall back to catalog/live
     const selectedModel = models.find(m => m.id === selectedModelId);
-    if (!selectedModel) { setProviderMsg({ type: 'error', text: 'Chọn model trước' }); return; }
+    const catalogEntry = catalogModels.find(c => c.id === selectedModelId);
 
     setProviderSaving(true);
     try {
@@ -196,31 +208,32 @@ function Settings({ onConfigSaved }: SettingsProps) {
         }
       });
 
-      const ok = await pushProviderConfig(
-        agentUrl,
-        selectedModel.provider,
-        apiKey.trim(),
-        selectedModel.id,
-        selectedModel.baseUrl,
-        selectedModel.toolsSupported,
-        selectedModel.visionSupported,
+      // Resolve provider config — prefer PredefinedModel, fallback to saved config
+      const savedConfig: Record<string, unknown> = await new Promise(res =>
+        chrome.storage.sync.get(['agentProviderConfig'], r => res(r.agentProviderConfig ?? {}))
       );
+      const provider = selectedModel?.provider ?? (savedConfig.provider as string) ?? 'openai-compat';
+      const baseUrl = selectedModel?.baseUrl ?? (savedConfig.baseUrl as string) ?? '';
+      const toolsSupported = selectedModel?.toolsSupported ?? (savedConfig.toolsSupported as boolean) ?? true;
+      const visionSupported = selectedModel?.visionSupported ?? (savedConfig.visionSupported as boolean) ?? false;
 
+      const ok = await pushProviderConfig(agentUrl, provider, apiKey.trim(), selectedModelId, baseUrl || undefined, toolsSupported, visionSupported);
       if (!ok) { setProviderMsg({ type: 'error', text: 'Agent service không phản hồi' }); return; }
 
       chrome.storage.sync.set({
         agentProviderConfig: {
-          modelId: selectedModel.id,
-          provider: selectedModel.provider,
+          modelId: selectedModelId,
+          provider,
           apiKey: apiKey.trim(),
-          model: selectedModel.id,
-          baseUrl: selectedModel.baseUrl ?? '',
-          toolsSupported: selectedModel.toolsSupported,
-          visionSupported: selectedModel.visionSupported,
+          model: selectedModelId,
+          baseUrl: baseUrl ?? '',
+          toolsSupported,
+          visionSupported,
         }
       });
-      setProviderStatus({ configured: true, provider: selectedModel.provider, model: selectedModel.id });
-      setProviderMsg({ type: 'success', text: '✅ Provider đã cập nhật!' });
+      const displayName = selectedModel?.name ?? catalogEntry?.name ?? selectedModelId;
+      setProviderStatus({ configured: true, provider, model: selectedModelId });
+      setProviderMsg({ type: 'success', text: `✅ Đã chọn: ${displayName}` });
       setShowProviderForm(false);
     } catch (err) {
       setProviderMsg({ type: 'error', text: err instanceof Error ? err.message : 'Lỗi không xác định' });
@@ -261,7 +274,20 @@ function Settings({ onConfigSaved }: SettingsProps) {
               type="button"
               className="btn-secondary"
               style={{ fontSize: 12, padding: '4px 10px' }}
-              onClick={() => { setShowProviderForm(v => !v); setProviderMsg(null); }}
+              onClick={() => {
+                const opening = !showProviderForm;
+                setShowProviderForm(v => !v);
+                setProviderMsg(null);
+                if (opening) {
+                  // Reload live models + catalog when form opens to get fresh data
+                  setCatalogLoading(true);
+                  getAgentServiceConfig().then(({ url: agentUrl }) =>
+                    Promise.all([fetchModelCatalog(agentUrl), listModelsForConfiguredProvider(agentUrl)])
+                      .then(([cat, live]) => { setCatalogModels(cat); if (live.length > 0) setLiveModels(live); })
+                      .finally(() => setCatalogLoading(false))
+                  );
+                }
+              }}
             >
               {showProviderForm ? 'Đóng' : providerStatus?.configured ? '✏️ Đổi' : '+ Cấu hình'}
             </button>
@@ -281,57 +307,41 @@ function Settings({ onConfigSaved }: SettingsProps) {
             </div>
           )}
 
-          {showProviderForm && (() => {
-            const selectedModel = models.find(m => m.id === selectedModelId);
-            const categories = Array.from(new Set(models.map(m => m.category)));
-            return (
-              <form onSubmit={handleSaveProvider} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label>Model</label>
-                  <select
-                    value={selectedModelId}
-                    onChange={e => setSelectedModelId(e.target.value)}
-                    style={{ width: '100%', padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 7, fontSize: 13, background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontFamily: 'inherit' }}
-                  >
-                    {categories.map(cat => (
-                      <optgroup key={cat} label={cat}>
-                        {models.filter(m => m.category === cat).map(m => (
-                          <option key={m.id} value={m.id}>{m.name}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                  {selectedModel && (
-                    <div style={{ display: 'flex', gap: 5, marginTop: 5 }}>
-                      <CapBadge label="Tools" active={selectedModel.toolsSupported} />
-                      <CapBadge label="Vision" active={selectedModel.visionSupported} />
-                    </div>
-                  )}
-                </div>
+          {showProviderForm && (
+            <form onSubmit={handleSaveProvider} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>Model</label>
+                <ModelSelector
+                  liveModels={liveModels.length > 0 ? liveModels : models.map(m => ({ id: m.id, name: m.name, model_type: null, status: 'enabled' }))}
+                  catalog={catalogModels}
+                  activeModelId={selectedModelId}
+                  onSelect={setSelectedModelId}
+                  loading={catalogLoading}
+                />
+              </div>
 
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label>API Key</label>
-                  <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
-                    placeholder="your-api-key" autoComplete="off" />
-                </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label>API Key</label>
+                <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+                  placeholder="your-api-key" autoComplete="off" />
+              </div>
 
-                {providerMsg && (
-                  <div style={{
-                    padding: '7px 11px', borderRadius: 7, fontSize: 12,
-                    background: providerMsg.type === 'error' ? 'rgba(239,68,68,0.07)' : 'rgba(16,185,129,0.07)',
-                    border: `1px solid ${providerMsg.type === 'error' ? 'rgba(239,68,68,0.25)' : 'rgba(16,185,129,0.25)'}`,
-                    color: providerMsg.type === 'error' ? 'var(--error)' : 'var(--success, #10b981)',
-                  }}>{providerMsg.text}</div>
-                )}
+              {providerMsg && (
+                <div style={{
+                  padding: '7px 11px', borderRadius: 7, fontSize: 12,
+                  background: providerMsg.type === 'error' ? 'rgba(239,68,68,0.07)' : 'rgba(16,185,129,0.07)',
+                  border: `1px solid ${providerMsg.type === 'error' ? 'rgba(239,68,68,0.25)' : 'rgba(16,185,129,0.25)'}`,
+                  color: providerMsg.type === 'error' ? 'var(--error)' : 'var(--success, #10b981)',
+                }}>{providerMsg.text}</div>
+              )}
 
-                <div className="button-group">
-                  <button type="submit" disabled={providerSaving || !apiKey.trim()}>
-                    {providerSaving ? 'Đang lưu…' : '💾 Lưu Provider'}
-                  </button>
-                </div>
-              </form>
-            );
-          })()}
+              <div className="button-group">
+                <button type="submit" disabled={providerSaving || !apiKey.trim() || !selectedModelId}>
+                  {providerSaving ? 'Đang lưu…' : '💾 Lưu Provider'}
+                </button>
+              </div>
+            </form>
+          )}
         </div>
 
         {/* ── Custom System Prompt ──────────────────────────────── */}

@@ -8,7 +8,8 @@ import {
   Bot,
 } from 'lucide-react';
 import ToolsPopover from '../components/ToolsPopover';
-import { getAgentServiceConfig, checkAgentServiceHealth, setAgentToken, pushProviderConfig, listModelsForConfiguredProvider, fetchProviderConfig, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, DEFAULT_AGENT_SERVICE_URL, type Skill, type CustomSkill, type ModelInfo } from '../lib/agentServiceClient';
+import ModelQuickSelect from '../components/ModelQuickSelect';
+import { getAgentServiceConfig, checkAgentServiceHealth, setAgentToken, pushProviderConfig, listModelsForConfiguredProvider, fetchProviderConfig, fetchModelCatalog, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, DEFAULT_AGENT_SERVICE_URL, type Skill, type CustomSkill, type ModelInfo, type ModelCatalogItem } from '../lib/agentServiceClient';
 import { useChatStore, type ChatMessage, type ToolInvocation, type MessageSegment, type ChatSession, sessionTitle, loadSessionsFromStorage, saveSessionsToStorage, upsertSession } from '../lib/chatStore';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -443,6 +444,7 @@ export default function ChatView({ onOpenSettings }: Props) {
   const [serviceUrl, setServiceUrl] = useState(DEFAULT_AGENT_SERVICE_URL);
   const [online, setOnline] = useState<boolean | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [catalogModels, setCatalogModels] = useState<ModelCatalogItem[]>([]);
   const [activeModelId, setActiveModelId] = useState('');
   const [skills, setSkills] = useState<Skill[]>([]);
   const [disabledSkillIds, setDisabledSkillIds] = useState<string[]>([]);
@@ -466,8 +468,10 @@ export default function ChatView({ onOpenSettings }: Props) {
       Promise.all([
         listModelsForConfiguredProvider(cfg.url),
         fetchProviderConfig(cfg.url),
-      ]).then(([list, serverCfg]) => {
+        fetchModelCatalog(cfg.url),
+      ]).then(([list, serverCfg, catalog]) => {
         setModels(list);
+        setCatalogModels(catalog);
         chrome.storage.sync.get(['agentProviderConfig'], result => {
           const saved = result.agentProviderConfig;
           const savedId = saved?.modelId || saved?.model;
@@ -902,32 +906,15 @@ export default function ChatView({ onOpenSettings }: Props) {
             disabled={isLoading}
           />
           {/* Model selector */}
-          {models.length > 0 && (() => {
-            const CHAT_TYPES = new Set(['chat', 'messages', 'responses', 'generateContent']);
-            const chatModels = models.filter(m =>
-              (!m.model_type || CHAT_TYPES.has(m.model_type)) &&
-              (!m.status || m.status === 'enabled')
-            );
-            const opts = chatModels.length > 0 ? chatModels : models.filter(m => !m.status || m.status === 'enabled');
-            return (
-              <select
-                value={activeModelId}
-                onChange={e => switchModel(e.target.value)}
-                disabled={isLoading}
-                title="Chọn model"
-                style={{
-                  marginLeft: 'auto',
-                  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
-                  borderRadius: 6, padding: '3px 6px',
-                  fontSize: 12, color: 'var(--text-secondary)',
-                  fontFamily: 'inherit', cursor: 'pointer', outline: 'none',
-                  maxWidth: 160,
-                }}
-              >
-                {opts.map(m => <option key={m.id} value={m.id}>{m.id}</option>)}
-              </select>
-            );
-          })()}
+          {models.length > 0 && (
+            <ModelQuickSelect
+              liveModels={models}
+              catalog={catalogModels}
+              activeModelId={activeModelId}
+              onSelect={switchModel}
+              disabled={isLoading}
+            />
+          )}
         </div>
 
         {/* Text input row */}
