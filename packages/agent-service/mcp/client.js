@@ -227,7 +227,7 @@ export async function listTools(forceRefresh = false) {
 
 // ── Tool calling ──────────────────────────────────────────────────────────────
 
-async function callToolOnServer(server, name, args) {
+async function callToolOnServer(server, name, args, signal) {
   await ensureSession(server);
 
   const res = await fetch(server.url, {
@@ -237,13 +237,14 @@ async function callToolOnServer(server, name, args) {
       jsonrpc: '2.0', id: Date.now(), method: 'tools/call',
       params: { name, arguments: args ?? {} },
     }),
+    signal,
   });
 
   if (!res.ok) {
     if ((res.status === 400 || res.status === 404) && server.sessionId !== STATELESS) {
       server.sessionId = null;
       await initSession(server);
-      return callToolOnServer(server, name, args);
+      return callToolOnServer(server, name, args, signal);
     }
     throw new Error(`tools/call failed [${server.id}]: ${res.status} ${res.statusText}`);
   }
@@ -253,9 +254,9 @@ async function callToolOnServer(server, name, args) {
   return data?.result;
 }
 
-export async function callTool(name, args) {
+export async function callTool(name, args, signal) {
   const serverId = toolRegistry.get(name) ?? NATIVE_ID;
   const server = servers.get(serverId);
   if (!server) throw new Error(`No MCP server found for tool: ${name}`);
-  return callToolOnServer(server, name, args);
+  return callToolOnServer(server, name, args, signal);
 }
