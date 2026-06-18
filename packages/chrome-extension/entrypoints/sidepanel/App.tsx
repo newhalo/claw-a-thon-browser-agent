@@ -10,6 +10,8 @@ import {
   setAgentToken,
   fetchNativeConfig,
   fetchProviderConfig,
+  pushProviderConfig,
+  pushNativeConfigToAgentService,
   pushSystemPrompt,
   type HealthStatus,
 } from './lib/agentServiceClient';
@@ -54,11 +56,23 @@ function App() {
   useEffect(() => { initApp(); }, []);
 
   async function initApp() {
+    // Check if URL was explicitly saved — fresh install has no saved URL
+    const hasExplicitUrl = await new Promise<boolean>((resolve) => {
+      chrome.storage.sync.get(['agentServiceUrl'], (r) => resolve(!!r.agentServiceUrl));
+    });
+
     const cfg = await getAgentServiceConfig();
     setAgentUrl(cfg.url);
 
     // Initialize module-level auth token for all API calls
     setAgentToken(cfg.token);
+
+    // Never auto-connect on fresh install — always require explicit setup
+    if (!hasExplicitUrl) {
+      setSetupMode('connection');
+      setReady(true);
+      return;
+    }
 
     const h = await checkAgentServiceHealthFull(cfg.url);
     setHealth(h);
@@ -78,12 +92,26 @@ function App() {
       return;
     }
 
-    // Fetch native-server config from auth-protected endpoint, notify background to update
+    // Fetch native-server config from agent-service.
+    // If server has no config (just restarted), re-push from extension storage so the
+    // background script keeps its existing connection instead of losing the token.
     fetchNativeConfig(cfg.url).then(nativeCfg => {
-      if (nativeCfg?.url) {
+      const isRealUrl = (u: string | null | undefined) =>
+        !!u && !u.includes('localhost') && !u.includes('127.0.0.1');
+
+      if (isRealUrl(nativeCfg?.url)) {
+        // Server has a real native-server URL — save it to extension storage
         chrome.runtime.sendMessage({
           type: 'SAVE_CONFIG',
-          config: { nativeServerUrl: nativeCfg.url, authToken: nativeCfg.token || '' }
+          config: { nativeServerUrl: nativeCfg!.url, authToken: nativeCfg!.token || '' }
+        });
+      } else {
+        // Server has no/localhost URL (just restarted) — re-push saved extension config
+        chrome.storage.sync.get(['clawathon_mcp_config'], (r) => {
+          const saved = r.clawathon_mcp_config;
+          if (saved?.nativeServerUrl && isRealUrl(saved.nativeServerUrl)) {
+            pushNativeConfigToAgentService(cfg.url, saved.nativeServerUrl, saved.authToken || '');
+          }
         });
       }
     });
@@ -105,8 +133,22 @@ function App() {
     });
 
     if (!h.provider?.configured) {
-      // Provider not configured on server → show provider setup
-      setSetupMode('provider');
+      // Provider not configured on server (likely restarted) — try re-pushing saved config
+      const repushed = await new Promise<boolean>((resolve) => {
+        chrome.storage.sync.get(['agentProviderConfig'], async (r) => {
+          const saved = r.agentProviderConfig;
+          if (!saved?.provider || !saved?.apiKey) { resolve(false); return; }
+          try {
+            const ok = await pushProviderConfig(cfg.url, saved.provider, saved.apiKey, saved.model, saved.baseUrl, saved.toolsSupported, saved.visionSupported, saved.embeddingModel);
+            resolve(ok);
+          } catch { resolve(false); }
+        });
+      });
+      if (!repushed) {
+        setSetupMode('provider');
+      } else {
+        setSetupMode(null);
+      }
     } else {
       setSetupMode(null);
     }

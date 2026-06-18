@@ -67,13 +67,16 @@ export function getProviderCfg() {
 }
 
 export function setProviderConfig({ provider, apiKey, model, baseUrl, toolsSupported, visionSupported, embeddingModel }) {
+  // Env vars are the authoritative floor — never downgrade to false/null if env says true
+  const effectiveTools = toolsSupported === true ? true : (envConfig.toolsSupported === true ? true : (toolsSupported ?? null));
+  const effectiveVision = visionSupported === true ? true : (envConfig.visionSupported === true ? true : (visionSupported ?? null));
   runtimeConfig = {
     provider,
     apiKey,
     model: model || null,
     baseUrl: baseUrl || null,
-    toolsSupported: toolsSupported ?? null,
-    visionSupported: visionSupported ?? null,
+    toolsSupported: effectiveTools,
+    visionSupported: effectiveVision,
     embeddingModel: embeddingModel || null,
   };
   _instance = null;

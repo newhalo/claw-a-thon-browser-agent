@@ -57,6 +57,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Screenshot store (no auth — IDs are random UUIDs, safe to expose publicly) ──
+  const screenshotMatch = url.pathname.match(/^\/screenshot\/([a-f0-9-]+)$/);
+  if (screenshotMatch && req.method === 'GET') {
+    const entry = screenshotStore.get(screenshotMatch[1]);
+    if (!entry) { res.writeHead(404).end('Not found'); return; }
+    const [, mimeType, b64] = entry.dataUrl.match(/^data:([^;]+);base64,(.+)$/) || [];
+    const buf = Buffer.from(b64, 'base64');
+    res.writeHead(200, { 'Content-Type': mimeType, 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=600' });
+    res.end(buf);
+    return;
+  }
+
   // ── Auth middleware ──────────────────────────────────────────────────────────
   if (VALID_TOKENS.length > 0) {
     const authHeader = req.headers['authorization'] || '';
@@ -448,18 +460,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Screenshot store ─────────────────────────────────────────────────────
-  const screenshotMatch = url.pathname.match(/^\/screenshot\/([a-f0-9-]+)$/);
-  if (screenshotMatch && req.method === 'GET') {
-    const entry = screenshotStore.get(screenshotMatch[1]);
-    if (!entry) { res.writeHead(404).end('Not found'); return; }
-    const [, mimeType, b64] = entry.dataUrl.match(/^data:([^;]+);base64,(.+)$/) || [];
-    const buf = Buffer.from(b64, 'base64');
-    res.writeHead(200, { 'Content-Type': mimeType, 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=600' });
-    res.end(buf);
-    return;
-  }
-
   // ── Chat ─────────────────────────────────────────────────────────────────
   if (url.pathname === '/chat') {
     await chatRoute(req, res);
@@ -476,6 +476,7 @@ server.listen(PORT, HOST, () => {
   console.log(`[agent-service] MCP server: ${getMcpConfig().url}`);
 });
 
+server.on('connection', (socket) => { socket.setNoDelay(true); });
 server.on('error', (err) => { console.error('[agent-service] Server error:', err); process.exit(1); });
 
 process.on('unhandledRejection', (reason) => {

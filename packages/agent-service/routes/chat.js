@@ -362,6 +362,8 @@ export default async function chatRoute(req, res) {
   res.setHeader('X-Conversation-Id', conversationId);
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  // Tell Nginx/reverse proxies to disable response buffering so chunks stream immediately
+  res.setHeader('X-Accel-Buffering', 'no');
 
   try {
     const { configured } = getProviderStatus();
