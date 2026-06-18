@@ -264,9 +264,9 @@ function buildToolsFromMcp(mcpTools, enabledTools) {
     result[t.name] = tool({
       description: t.description || t.name,
       parameters: z.object(zodShape),
-      execute: async (args) => {
+      execute: async (args, { abortSignal } = {}) => {
         try {
-          const res = await callTool(t.name, args);
+          const res = await callTool(t.name, args, abortSignal);
           // MCP result is { content: [{ type, text } | { type, data, mimeType }] }
           const content = res?.content ?? [];
           const textParts = content.filter(c => c.type === 'text').map(c => c.text);
@@ -446,10 +446,14 @@ export default async function chatRoute(req, res) {
       res.setHeader('X-Context-Compressed', 'true');
     }
 
+    const abortController = new AbortController();
+    req.on('close', () => abortController.abort());
+
     const streamOpts = {
       model: getModel(),
       system: systemPrompt,
       messages: finalMessages,
+      abortSignal: abortController.signal,
       maxSteps: (hasTools && toolsOk) ? (parseInt(process.env.MAX_STEPS || '50', 10)) : 1,
       // Disable built-in retries — 429s retry immediately with no backoff, making things worse.
       // The client should handle retry/backoff at a higher level.

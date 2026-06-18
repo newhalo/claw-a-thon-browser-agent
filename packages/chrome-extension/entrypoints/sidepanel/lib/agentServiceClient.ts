@@ -65,6 +65,22 @@ export async function checkAgentServiceHealthFull(url: string): Promise<HealthSt
   }
 }
 
+export interface ModelCatalogItem {
+  id: string;
+  name: string;
+  description: string;
+  image: string;
+  isFree: boolean;
+  enabledTypes: string[];
+  hasRateLimit: boolean;
+  hasGuardrails: boolean;
+  linkDocument: string;
+  inputPrice: string;
+  outputPrice: string;
+  provider: { name: string; code: string } | null;
+  configEnabled: boolean;
+}
+
 export interface PredefinedModel {
   id: string;
   name: string;
@@ -260,6 +276,16 @@ export async function fetchModels(agentServiceUrl: string): Promise<PredefinedMo
   }
   const { BUNDLED_MODELS } = await import('./models');
   return BUNDLED_MODELS;
+}
+
+export async function fetchModelCatalog(agentServiceUrl: string): Promise<ModelCatalogItem[]> {
+  try {
+    const res = await fetch(`${agentServiceUrl}/model-catalog`, { headers: getAuthHeaders(), signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return [];
+    return res.json();
+  } catch {
+    return [];
+  }
 }
 
 export async function pushProviderConfig(

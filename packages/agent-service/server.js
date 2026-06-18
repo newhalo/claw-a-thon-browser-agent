@@ -6,6 +6,43 @@ import chatRoute, { screenshotStore } from './routes/chat.js';
 import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats, setMemoryConfig, getMemoryConfig, deduplicateMemories } from './memory/long-term.js';
 import { PREDEFINED_MODELS } from './models.js';
 import { getSkillsPublic } from './skills/registry.js';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const _require = createRequire(import.meta.url);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// VNGCloud MaaS model catalog — loaded once at startup
+const CHAT_TYPE_SET = new Set(['chat', 'messages', 'responses', 'generateContent']);
+let _modelCatalog = null;
+function getModelCatalog() {
+  if (_modelCatalog) return _modelCatalog;
+  try {
+    const raw = _require('./constant/model_configuration.json');
+    const items = Array.isArray(raw) ? raw : (raw.listData ?? []);
+    _modelCatalog = items
+      .filter(m => m.enabledTypes?.some(t => CHAT_TYPE_SET.has(t)))
+      .map(m => ({
+        id: m.path,
+        name: m.name,
+        description: m.description || '',
+        image: m.image || '',
+        isFree: !!m.isFree,
+        enabledTypes: m.enabledTypes || [],
+        hasRateLimit: !!m.hasRateLimit,
+        hasGuardrails: !!m.hasGuardrails,
+        linkDocument: m.linkDocument || '',
+        inputPrice: m.inputPrice || '',
+        outputPrice: m.outputPrice || '',
+        provider: m.provider ? { name: m.provider.name, code: m.provider.code } : null,
+        configEnabled: m.isEnabled === true && m.modelStatus === 'ENABLED',
+      }));
+  } catch {
+    _modelCatalog = [];
+  }
+  return _modelCatalog;
+}
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || 'localhost';
@@ -323,6 +360,13 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/models' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(PREDEFINED_MODELS));
+    return;
+  }
+
+  // ── VNGCloud model catalog (rich metadata) ───────────────────────────────
+  if (url.pathname === '/model-catalog' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(getModelCatalog()));
     return;
   }
 
