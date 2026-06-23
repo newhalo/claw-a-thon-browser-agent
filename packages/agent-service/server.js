@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { listTools, resetSession, setMcpConfig, getMcpConfig, setExternalMcpServers, getExternalMcpServers } from './mcp/client.js';
-import { setProviderConfig, getProviderStatus, getProviderCfg } from './providers/index.js';
+import { setProviderConfig, getProviderStatus, getProviderCfg, getModel } from './providers/index.js';
 import { setCustomSystemPrompt, getCustomSystemPrompt } from './config.js';
 import chatRoute, { screenshotStore } from './routes/chat.js';
 import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats, setMemoryConfig, getMemoryConfig, deduplicateMemories } from './memory/long-term.js';
@@ -367,6 +367,58 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/model-catalog' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(getModelCatalog()));
+    return;
+  }
+
+  // ── Summarize skill from session ─────────────────────────────────────────
+  if (url.pathname === '/summarize-skill' && req.method === 'POST') {
+    try {
+      const model = getModel();
+      if (!model) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'provider_not_configured' }));
+        return;
+      }
+      const { messages = [], toolCalls = [] } = await readBody(req);
+      const { generateObject } = await import('ai');
+      const { z } = await import('zod');
+
+      const transcript = messages
+        .map(m => `${m.role}: ${typeof m.content === 'string' ? m.content : JSON.stringify(m.content)}`)
+        .join('\n');
+
+      let userPrompt = transcript;
+      if (toolCalls.length > 0) {
+        const toolSection = toolCalls
+          .map(tc => `- ${tc.toolName}(${JSON.stringify(tc.args)})`)
+          .join('\n');
+        userPrompt += `\n\nTOOL CALLS MADE IN SESSION:\n${toolSection}`;
+      }
+
+      const schema = z.object({
+        name: z.string(),
+        icon: z.string(),
+        description: z.string(),
+        category: z.enum(['custom', 'work', 'research', 'productivity', 'dev']),
+        instructions: z.string(),
+      });
+
+      const result = await generateObject({
+        model,
+        schema,
+        system: `You are an AI that creates reusable skill definitions for a browser agent.
+Based on the session history provided, create a skill that can be reused.
+Instructions must be specific enough that a new agent (without session context) can perform the same task.
+Write instructions in Markdown with numbered steps. Reference tool names when relevant (e.g. browser_navigate, browser_click, browser_type).`,
+        prompt: userPrompt,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result.object));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 

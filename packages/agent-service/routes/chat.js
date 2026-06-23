@@ -18,7 +18,7 @@ import { getModel, getEmbeddingModel, getProviderStatus, isToolsSupported, isVis
 import { getCustomSystemPrompt } from '../config.js';
 import { listTools, callTool } from '../mcp/client.js';
 import { getHistory, appendMessages } from '../memory/short-term.js';
-import { searchMemories, consolidateConversation, saveMemory } from '../memory/long-term.js';
+import { searchMemories, getRecentMemories, consolidateConversation, saveMemory } from '../memory/long-term.js';
 import { getSkillById } from '../skills/registry.js';
 
 // Screenshot store — keeps base64 images out of LLM context.
@@ -386,11 +386,17 @@ export default async function chatRoute(req, res) {
     ];
     const skillSystemPrompts = allSkillPrompts.join('\n\n');
 
-    // Retrieve relevant long-term memories for this query
+    // Retrieve long-term memories: always load recent personal facts + semantic search for query-relevant ones
     const firstUserMsg = messages.findLast(m => m.role === 'user');
     let memoryContext = '';
-    if (firstUserMsg) {
-      try {
+    try {
+      // Always include recent memories (personal facts, preferences, etc.)
+      const recentMemories = getRecentMemories(20);
+      const seenIds = new Set(recentMemories.map(m => m.id));
+      let allMemories = [...recentMemories];
+
+      // Also do semantic/FTS search for query-relevant memories not in recent list
+      if (firstUserMsg) {
         const queryText = typeof firstUserMsg.content === 'string'
           ? firstUserMsg.content
           : (Array.isArray(firstUserMsg.content)
@@ -404,15 +410,22 @@ export default async function chatRoute(req, res) {
             const { embedding } = await embed({ model: embModel, value: queryText });
             queryEmbedding = embedding;
           }
-        } catch { /* embedding unavailable — fall through to FTS */ }
+        } catch { /* embedding unavailable — skip semantic search */ }
 
-        const memories = searchMemories(queryText, queryEmbedding, 4);
-        if (memories.length > 0) {
-          memoryContext = memories.map(m => `- ${m.content}`).join('\n');
+        const searchResults = searchMemories(queryText, queryEmbedding, 6);
+        for (const m of searchResults) {
+          if (!seenIds.has(m.id)) {
+            allMemories.push(m);
+            seenIds.add(m.id);
+          }
         }
-      } catch (err) {
-        console.warn('[memory] Search failed:', err.message);
       }
+
+      if (allMemories.length > 0) {
+        memoryContext = allMemories.map(m => `- ${m.content}`).join('\n');
+      }
+    } catch (err) {
+      console.warn('[memory] Search failed:', err.message);
     }
 
     const basePrompt = toolsOk ? SYSTEM_PROMPT : SYSTEM_PROMPT_NO_TOOLS;
