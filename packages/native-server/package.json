@@ -5,7 +5,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "dev": "env-cmd .env.local node --watch server.json",
+    "dev": "node --env-file .env.local --watch server.js",
     "start": "node server.js --env-file .env"
   },
   "engines": {

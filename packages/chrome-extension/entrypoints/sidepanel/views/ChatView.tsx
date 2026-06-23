@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import ToolsPopover from '../components/ToolsPopover';
 import ModelQuickSelect from '../components/ModelQuickSelect';
+import MoreActionsMenu from '../components/MoreActionsMenu';
 import { getAgentServiceConfig, checkAgentServiceHealth, setAgentToken, pushProviderConfig, listModelsForConfiguredProvider, fetchProviderConfig, fetchModelCatalog, fetchSkills, loadCustomSkills, loadDisabledSkills, loadCustomMcpServers, pushExternalMcpServers, pushMemoryConfig, DEFAULT_AGENT_SERVICE_URL, type Skill, type CustomSkill, type ModelInfo, type ModelCatalogItem } from '../lib/agentServiceClient';
 import { useChatStore, type ChatMessage, type ToolInvocation, type MessageSegment, type ChatSession, sessionTitle, loadSessionsFromStorage, saveSessionsToStorage, upsertSession } from '../lib/chatStore';
 
@@ -456,6 +457,9 @@ export default function ChatView({ onOpenSettings }: Props) {
   const [isMultiline, setIsMultiline] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashQuery, setSlashQuery] = useState('');
+  const [slashIndex, setSlashIndex] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -788,19 +792,49 @@ export default function ChatView({ onOpenSettings }: Props) {
     if (id === currentSessionId) newSession();
   }, [currentSessionId, newSession]);
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); return; }
-    if (e.key === 'ArrowUp' && sentHistory.length > 0) {
-      const next = Math.min(historyIdx + 1, sentHistory.length - 1);
-      setHistoryIdx(next);
-      setInput(sentHistory[next]);
-      e.preventDefault();
+  const allSkillsForSlash = [
+    ...skills.filter(s => !disabledSkillIds.includes(s.id)),
+    ...customSkills.filter(s => !disabledSkillIds.includes(s.id)),
+  ];
+  const slashFiltered = slashQuery
+    ? allSkillsForSlash.filter(s =>
+        s.name.toLowerCase().includes(slashQuery) ||
+        (s.description ?? '').toLowerCase().includes(slashQuery)
+      )
+    : allSkillsForSlash;
+
+  const selectSlashSkill = (skill: Skill | CustomSkill) => {
+    if (!activeSkills.includes(skill.id)) {
+      toggleSkill(skill.id);
+      chrome.storage.local.set({ activeSkills: [...activeSkills, skill.id] });
     }
-    if (e.key === 'ArrowDown' && historyIdx >= 0) {
-      const next = historyIdx - 1;
-      setHistoryIdx(next);
-      setInput(next < 0 ? '' : sentHistory[next]);
-      e.preventDefault();
+    setInput('');
+    setShowSlashMenu(false);
+    setSlashQuery('');
+    textareaRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlashMenu && slashFiltered.length > 0) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex(i => Math.min(i + 1, slashFiltered.length - 1)); return; }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); setSlashIndex(i => Math.max(i - 1, 0)); return; }
+      if (e.key === 'Enter')     { e.preventDefault(); selectSlashSkill(slashFiltered[slashIndex]); return; }
+      if (e.key === 'Escape')    { setShowSlashMenu(false); return; }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); return; }
+    if (!showSlashMenu) {
+      if (e.key === 'ArrowUp' && sentHistory.length > 0) {
+        const next = Math.min(historyIdx + 1, sentHistory.length - 1);
+        setHistoryIdx(next);
+        setInput(sentHistory[next]);
+        e.preventDefault();
+      }
+      if (e.key === 'ArrowDown' && historyIdx >= 0) {
+        const next = historyIdx - 1;
+        setHistoryIdx(next);
+        setInput(next < 0 ? '' : sentHistory[next]);
+        e.preventDefault();
+      }
     }
   };
 
@@ -915,6 +949,13 @@ export default function ChatView({ onOpenSettings }: Props) {
               disabled={isLoading}
             />
           )}
+          <div style={{ marginLeft: 'auto' }}>
+            <MoreActionsMenu
+              messages={messages}
+              serviceUrl={serviceUrl}
+              disabled={isLoading}
+            />
+          </div>
         </div>
 
         {/* Text input row */}
@@ -925,11 +966,62 @@ export default function ChatView({ onOpenSettings }: Props) {
           borderRadius: 12,
           padding: '6px 6px 6px 12px',
           transition: 'border-color 0.15s',
+          position: 'relative',
         }}>
+          {/* Slash command menu */}
+          {showSlashMenu && slashFiltered.length > 0 && (
+            <div style={{
+              position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 4,
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              borderRadius: 10, padding: 4, boxShadow: 'var(--shadow-md)',
+              maxHeight: 220, overflowY: 'auto', zIndex: 100,
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', padding: '4px 8px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                Skills
+              </div>
+              {slashFiltered.map((skill, i) => (
+                <button
+                  key={skill.id}
+                  type="button"
+                  onClick={() => selectSlashSkill(skill)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                    padding: '6px 8px', borderRadius: 6, border: 'none', textAlign: 'left',
+                    background: i === slashIndex ? 'var(--accent-light)' : 'transparent',
+                    cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  <span style={{ fontSize: 16, width: 20, textAlign: 'center', flexShrink: 0 }}>{skill.icon}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{skill.name}</div>
+                    {skill.description && (
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {skill.description}
+                      </div>
+                    )}
+                  </div>
+                  {activeSkills.includes(skill.id) && (
+                    <span style={{ fontSize: 10, color: 'var(--accent)', fontWeight: 700, flexShrink: 0 }}>Active</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={input}
-            onChange={e => setInput(e.target.value)}
+            onChange={e => {
+              const val = e.target.value;
+              setInput(val);
+              if (val.startsWith('/')) {
+                setSlashQuery(val.slice(1).toLowerCase());
+                setShowSlashMenu(true);
+                setSlashIndex(0);
+              } else {
+                setShowSlashMenu(false);
+                setSlashQuery('');
+              }
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Nhắn tin cho agent…"
             rows={1}

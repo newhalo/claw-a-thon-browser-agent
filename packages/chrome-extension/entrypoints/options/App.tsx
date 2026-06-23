@@ -8,6 +8,7 @@ import {
   loadCustomMcpServers, saveCustomMcpServers, pushExternalMcpServers, parseMcpConfigJson, testMcpServer,
   getMemoryConfig, pushMemoryConfig,
   listModelsFromProvider, listModelsForConfiguredProvider, fetchProviderConfig, fetchModelCatalog,
+  getAuthHeaders,
   DEFAULT_AGENT_SERVICE_URL,
   type Skill, type CustomSkill, type CustomMcpServer, type ModelInfo, type ModelCatalogItem,
 } from '../sidepanel/lib/agentServiceClient';
@@ -622,7 +623,7 @@ function SkillRow({ icon, name, subtitle, disabled, onToggle, onDelete }: {
   );
 }
 
-function SkillsTab() {
+function SkillsTab({ prefillOnMount }: { prefillOnMount?: boolean }) {
   const [builtins, setBuiltins] = useState<Skill[]>([]);
   const [customs, setCustoms] = useState<CustomSkill[]>([]);
   const [disabled, setDisabled] = useState<string[]>([]);
@@ -640,6 +641,23 @@ function SkillsTab() {
     loadCustomSkills().then(setCustoms);
     loadDisabledSkills().then(setDisabled);
   }, []);
+
+  useEffect(() => {
+    if (!prefillOnMount) return;
+    chrome.storage.session.get(['skillDraft'], (result) => {
+      const draft = result.skillDraft;
+      if (!draft) return;
+      setMode('create');
+      setForm({
+        name: draft.name ?? '',
+        icon: draft.icon ?? '🔧',
+        description: draft.description ?? '',
+        category: draft.category ?? 'custom',
+        instructions: draft.instructions ?? '',
+      });
+      chrome.storage.session.remove(['skillDraft']);
+    });
+  }, [prefillOnMount]);
 
   const toggle = async (id: string) => {
     const next = disabled.includes(id) ? disabled.filter(x => x !== id) : [...disabled, id];
@@ -1154,7 +1172,7 @@ function MemoryTab() {
     try {
       const { url } = await getAgentServiceConfig();
       const [memRes, cfgRes] = await Promise.all([
-        fetch(`${url}/memories?limit=100`),
+        fetch(`${url}/memories?limit=100`, { headers: getAuthHeaders() }),
         getMemoryConfig(url),
       ]);
       if (memRes.ok) {
@@ -1170,7 +1188,7 @@ function MemoryTab() {
 
   const deleteOne = async (id: number) => {
     const { url } = await getAgentServiceConfig();
-    await fetch(`${url}/memories/${id}`, { method: 'DELETE' });
+    await fetch(`${url}/memories/${id}`, { method: 'DELETE', headers: getAuthHeaders() });
     setMemories(p => p.filter(m => m.id !== id));
     if (stats) setStats(s => s ? { ...s, total: s.total - 1 } : s);
   };
@@ -1178,7 +1196,7 @@ function MemoryTab() {
   const clearAll = async () => {
     if (!confirm('Xóa toàn bộ long-term memory?')) return;
     const { url } = await getAgentServiceConfig();
-    const res = await fetch(`${url}/memories/clear`, { method: 'POST' });
+    const res = await fetch(`${url}/memories/clear`, { method: 'POST', headers: getAuthHeaders() });
     if (res.ok) { setMemories([]); setStats(s => s ? { ...s, total: 0, withEmbeddings: 0 } : s); setMsg({ type: 'success', text: '✅ Đã xóa toàn bộ memory' }); }
     else setMsg({ type: 'error', text: '❌ Xóa thất bại' });
   };
@@ -1189,7 +1207,7 @@ function MemoryTab() {
     setOptimizing(true);
     try {
       const { url } = await getAgentServiceConfig();
-      const res = await fetch(`${url}/memories/optimize`, { method: 'POST' });
+      const res = await fetch(`${url}/memories/optimize`, { method: 'POST', headers: getAuthHeaders() });
       if (res.ok) {
         const data = await res.json();
         const { merged = 0, deleted = 0 } = data.dedup ?? {};
@@ -1459,7 +1477,9 @@ function SecurityTab() {
 // ── Root App ──────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('general');
+  const params = new URLSearchParams(window.location.search);
+  const prefillSkill = params.get('prefill') === '1' && params.get('tab') === 'skills';
+  const [tab, setTab] = useState<Tab>(prefillSkill ? 'skills' : 'general');
 
   return (
     <Tooltip.Provider delayDuration={300}>
@@ -1502,7 +1522,7 @@ export default function App() {
       <main style={{ flex: 1, minWidth: 0, padding: '40px 48px', overflowX: 'hidden' }}>
         {tab === 'general'  && <GeneralTab />}
         {tab === 'provider' && <ProviderTab />}
-        {tab === 'skills'   && <SkillsTab />}
+        {tab === 'skills'   && <SkillsTab prefillOnMount={prefillSkill} />}
         {tab === 'mcp'      && <McpTab />}
         {tab === 'memory'   && <MemoryTab />}
         {tab === 'security' && <SecurityTab />}

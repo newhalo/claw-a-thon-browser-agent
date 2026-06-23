@@ -560,3 +560,43 @@ export async function pushNativeConfigToAgentService(
     return false;
   }
 }
+
+export interface SkillDraft {
+  name: string;
+  icon: string;
+  description: string;
+  category: string;
+  instructions: string;
+}
+
+export async function summarizeSkillFromSession(
+  agentServiceUrl: string,
+  messages: { role: string; content: string }[],
+  toolCalls: { toolName: string; args: unknown }[],
+): Promise<SkillDraft> {
+  // Pre-summarize long sessions client-side (no extra LLM call)
+  let processedMessages = messages;
+  if (messages.length > 30) {
+    const older = messages.slice(0, messages.length - 10);
+    const recent = messages.slice(messages.length - 10);
+    const summaryContent = older
+      .map(m => `${m.role}: ${typeof m.content === 'string' ? m.content.slice(0, 200) : '[complex content]'}`)
+      .join('\n');
+    processedMessages = [
+      { role: 'user', content: `[Earlier session summary — ${older.length} messages]\n${summaryContent}` },
+      ...recent,
+    ];
+  }
+
+  const res = await fetch(`${agentServiceUrl}/summarize-skill`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+    body: JSON.stringify({ messages: processedMessages, toolCalls }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
