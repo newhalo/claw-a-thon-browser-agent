@@ -13,8 +13,10 @@ export default defineConfig({
     minimum_chrome_version: '120',
     // Pin extension ID for local dev so chrome.identity redirect URI is stable.
     // Generated from .dev-key.pem — fixed ID: bgkjjnggooljgppjidjfibnpaacaffop
-    // Omitted in production: CWS assigns its own permanent ID.
-    ...(isDev ? { key: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArTQW2v4iYzX7IZ+G3iXck+GOdrlx0ul93L0tdjuPdIjorunqYNkcfqe8hioROmIDfElkvBokEqyeUjTRVsx6x/ggEmwtr65DDK3V0mJqkhNpVyoF5/DLAradP11nm317rhg8qw8QRnWnWQotYwsVe/0SGpavlLaFNwX2bkhCniblzV0b6v7S65/x76+898GP1jsfcaLwO7LQHuh2c3rt/DuN1tVkJjdotWzJbMSRJ3TMonuf0nMjG4L1JbTvb+xTOmC7MOViPWpXwxFi8qxt0qANDOQQOI8O0U8GUB/vXKqEa1GkgoWRjG5vGfu4PxUiN3+Ie+Zzrlp48iXJXtedlwIDAQAB' } : {}),
+    // On CI: injected via DEV_MANIFEST_KEY secret. Omitted for CWS production builds.
+    ...(isDev ? {
+      key: process.env.DEV_MANIFEST_KEY || 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArTQW2v4iYzX7IZ+G3iXck+GOdrlx0ul93L0tdjuPdIjorunqYNkcfqe8hioROmIDfElkvBokEqyeUjTRVsx6x/ggEmwtr65DDK3V0mJqkhNpVyoF5/DLAradP11nm317rhg8qw8QRnWnWQotYwsVe/0SGpavlLaFNwX2bkhCniblzV0b6v7S65/x76+898GP1jsfcaLwO7LQHuh2c3rt/DuN1tVkJjdotWzJbMSRJ3TMonuf0nMjG4L1JbTvb+xTOmC7MOViPWpXwxFi8qxt0qANDOQQOI8O0U8GUB/vXKqEa1GkgoWRjG5vGfu4PxUiN3+Ie+Zzrlp48iXJXtedlwIDAQAB',
+    } : {}),
     permissions: [
       'storage',
       'activeTab',

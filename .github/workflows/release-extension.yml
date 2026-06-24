@@ -38,7 +38,11 @@ jobs:
 
       - name: Build & zip extension
         working-directory: packages/chrome-extension
-        run: pnpm zip
+        env:
+          IN_COMPILE: 'true'
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          DEV_MANIFEST_KEY: ${{ secrets.DEV_MANIFEST_KEY }}
+        run: NODE_ENV=development pnpm zip
 
       - name: Find zip file
         id: find_zip
