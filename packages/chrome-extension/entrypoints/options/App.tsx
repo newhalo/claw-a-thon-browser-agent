@@ -82,6 +82,7 @@ const formCardStyle: React.CSSProperties = {
 function GeneralTab() {
   const [agentUrl, setAgentUrl] = useState(DEFAULT_AGENT_SERVICE_URL);
   const [agentToken, setAgentTokenState] = useState('');
+  const [hasJwt, setHasJwt] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
   const [connectionSaving, setConnectionSaving] = useState(false);
   const [promptSaving, setPromptSaving] = useState(false);
@@ -91,6 +92,7 @@ function GeneralTab() {
   useEffect(() => {
     getAgentServiceConfig().then(c => { setAgentUrl(c.url); setAgentTokenState(c.token); });
     chrome.storage.sync.get(['agentCustomSystemPrompt'], r => setCustomPrompt(r.agentCustomSystemPrompt || ''));
+    chrome.storage.local.get(['auth_jwt'], r => setHasJwt(!!r.auth_jwt));
   }, []);
 
   const saveConnection = async () => {
@@ -132,10 +134,17 @@ function GeneralTab() {
           <Label>Service URL</Label>
           <input style={inputStyle} type="url" value={agentUrl} onChange={e => setAgentUrl(e.target.value)} placeholder="http://localhost:3000" />
         </div>
-        <div>
-          <Label>Auth Token <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(để trống nếu không cần)</span></Label>
-          <input style={inputStyle} type="password" value={agentToken} onChange={e => setAgentTokenState(e.target.value)} placeholder="your-secret-token" autoComplete="off" />
-        </div>
+        {!hasJwt && (
+          <div>
+            <Label>Auth Token <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(để trống nếu không cần)</span></Label>
+            <input style={inputStyle} type="password" value={agentToken} onChange={e => setAgentTokenState(e.target.value)} placeholder="your-secret-token" autoComplete="off" />
+          </div>
+        )}
+        {hasJwt && (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 10px', background: 'var(--surface-alt, color-mix(in srgb, var(--border) 50%, transparent))', borderRadius: 6 }}>
+            ✓ Đã đăng nhập qua Google — không cần Auth Token
+          </div>
+        )}
         <Msg msg={msg} />
         <div>
           <button onClick={saveConnection} disabled={connectionSaving} style={btnStyle}>
@@ -1480,6 +1489,16 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const prefillSkill = params.get('prefill') === '1' && params.get('tab') === 'skills';
   const [tab, setTab] = useState<Tab>(prefillSkill ? 'skills' : 'general');
+
+  // Load JWT into module-level cache so all API calls in options page are authenticated
+  useEffect(() => {
+    chrome.storage.local.get(['auth_jwt'], async (r) => {
+      if (r.auth_jwt) {
+        const { setJwt } = await import('../sidepanel/lib/agentServiceClient');
+        setJwt(r.auth_jwt);
+      }
+    });
+  }, []);
 
   return (
     <Tooltip.Provider delayDuration={300}>

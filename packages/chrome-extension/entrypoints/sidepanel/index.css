@@ -313,6 +313,14 @@ body {
 .md-user pre { background: rgba(0,0,0,0.2); color: #fff; }
 .md-user a { color: #c7d2fe; }
 
+/* ── Scrollbar ──────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar              { width: 4px; height: 4px; }
+::-webkit-scrollbar-track        { background: transparent; }
+::-webkit-scrollbar-thumb        { background: var(--border); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover  { background: var(--text-muted); }
+
+.popover-scroll { overflow-y: auto; flex: 1; min-height: 0; }
+
 /* ── Animations ─────────────────────────────────────────────────────────────── */
 @keyframes pulse   { 0%,100% { opacity: 1 } 50% { opacity: 0.3 } }
 @keyframes spin    { to { transform: rotate(360deg) } }

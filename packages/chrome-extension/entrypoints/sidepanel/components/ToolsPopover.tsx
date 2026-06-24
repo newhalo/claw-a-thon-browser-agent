@@ -35,7 +35,8 @@ export default function ToolsPopover() {
           style={{
             width: 340,
             maxHeight: '70vh',
-            overflow: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
             background: 'var(--bg-secondary)',
             border: '1px solid var(--border)',
             borderRadius: 10,
@@ -43,7 +44,7 @@ export default function ToolsPopover() {
             zIndex: 1000,
           }}
         >
-          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Browser Tools</span>
             <Popover.Close asChild>
               <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', padding: 2 }}>
@@ -51,7 +52,9 @@ export default function ToolsPopover() {
               </button>
             </Popover.Close>
           </div>
-          <ToolsPanel compact />
+          <div className="popover-scroll">
+            <ToolsPanel compact />
+          </div>
           <Popover.Arrow style={{ fill: 'var(--border)' }} />
         </Popover.Content>
       </Popover.Portal>

@@ -358,12 +358,7 @@ export default async function chatRoute(req, res) {
   // Do NOT prepend server-side history — that would duplicate messages and confuse the model.
   const allMessages = messages;
 
-  // Set headers before streaming — pipeDataStreamToResponse will call writeHead itself
   res.setHeader('X-Conversation-Id', conversationId);
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  // Tell Nginx/reverse proxies to disable response buffering so chunks stream immediately
-  res.setHeader('X-Accel-Buffering', 'no');
 
   try {
     const { configured } = getProviderStatus();
@@ -446,17 +441,23 @@ export default async function chatRoute(req, res) {
     let contextCompressed = false;
     const estimatedTokens = estimateTokens(allMessages);
     if (estimatedTokens > COMPRESS_TOKEN_THRESHOLD) {
+      // Start SSE stream early so client shows a compression indicator immediately
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      res.write(`2:${JSON.stringify([{ type: 'status', status: 'compressing' }])}\n`);
+
       console.log(`[chat] Context too large (~${estimatedTokens} tokens), compressing...`);
       const result = await compressHistory(allMessages);
       finalMessages = result.messages;
       contextCompressed = result.compressed;
       if (contextCompressed) {
         console.log(`[chat] Compressed ${allMessages.length} → ${finalMessages.length} messages`);
+        res.write(`2:${JSON.stringify([{ type: 'status', status: 'compressed' }])}\n`);
       }
-    }
-
-    if (contextCompressed) {
-      res.setHeader('X-Context-Compressed', 'true');
     }
 
     const abortController = new AbortController();
@@ -514,17 +515,31 @@ export default async function chatRoute(req, res) {
         }
       },
     });
-    await result.pipeDataStreamToResponse(res, {
-      getErrorMessage: (error) => {
-        const status = error?.statusCode ?? error?.status;
-        if (status === 429) {
-          const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'];
-          const wait = retryAfter ? ` Thử lại sau ${Math.ceil(retryAfter / 60)} phút.` : '';
-          return `Rate limit: API quota đã hết.${wait}`;
-        }
-        return error?.message || 'An error occurred';
-      },
-    });
+    const getErrorMessage = (error) => {
+      const status = error?.statusCode ?? error?.status;
+      if (status === 429) {
+        const retryAfter = error?.responseHeaders?.['ai-ratelimit-reset'];
+        const wait = retryAfter ? ` Thử lại sau ${Math.ceil(retryAfter / 60)} phút.` : '';
+        return `Rate limit: API quota đã hết.${wait}`;
+      }
+      return error?.message || 'An error occurred';
+    };
+
+    if (res.headersSent) {
+      // Headers already sent (compression path) — pipe stream manually
+      const { Readable } = await import('node:stream');
+      const dataStream = result.toDataStream({ getErrorMessage });
+      await new Promise((resolve, reject) => {
+        Readable.fromWeb(dataStream).pipe(res);
+        res.on('finish', resolve);
+        res.on('error', reject);
+      });
+    } else {
+      await result.pipeDataStreamToResponse(res, {
+        headers: { 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' },
+        getErrorMessage,
+      });
+    }
   } catch (err) {
     const isRateLimit = err.message?.includes('Too Many Requests') || err.statusCode === 429 || err.status === 429;
     console.error(`[chat] Stream error${isRateLimit ? ' (rate limit)' : ''}:`, err.message || err);

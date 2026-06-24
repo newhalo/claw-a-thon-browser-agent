@@ -53,6 +53,7 @@ function parseDataStreamChunk(raw: string) {
   try {
     switch (prefix) {
       case '0': return { type: 'text',        data: JSON.parse(payload) as string };
+      case '2': return { type: 'data',        data: JSON.parse(payload) as unknown[] };
       case '9': return { type: 'tool-call',   data: JSON.parse(payload) };
       case 'a': return { type: 'tool-result', data: JSON.parse(payload) };
       case 'd': return { type: 'finish',      data: JSON.parse(payload) };
@@ -253,14 +254,15 @@ function SkillsPopover({ skills, activeIds, onToggle, disabled }: {
           width: 260, background: 'var(--bg-secondary)',
           border: '1px solid var(--border)', borderRadius: 10,
           boxShadow: '0 8px 32px rgba(0,0,0,0.24)', zIndex: 1000,
+          maxHeight: '70vh', display: 'flex', flexDirection: 'column',
         }}>
-          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>Agent Skills</span>
             <Popover.Close asChild>
               <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', padding: 2 }}><X size={14} /></button>
             </Popover.Close>
           </div>
-          <div style={{ padding: '6px 8px' }}>
+          <div className="popover-scroll" style={{ padding: '6px 8px' }}>
             {skills.map(skill => {
               const active = activeIds.includes(skill.id);
               return (
@@ -452,6 +454,8 @@ export default function ChatView({ onOpenSettings }: Props) {
   const [disabledExternalTools, setDisabledExternalTools] = useState<string[]>([]);
   const [customSkills, setCustomSkills] = useState<CustomSkill[]>([]);
   const [isWaitingFirstChunk, setIsWaitingFirstChunk] = useState(false);
+  const [isCompressingContext, setIsCompressingContext] = useState(false);
+  const [skillSuggestion, setSkillSuggestion] = useState<Skill | null>(null);
   const [sentHistory, setSentHistory] = useState<string[]>([]);
   const [historyIdx, setHistoryIdx] = useState(-1);
   const [isMultiline, setIsMultiline] = useState(false);
@@ -561,6 +565,24 @@ export default function ChatView({ onOpenSettings }: Props) {
     return () => clearInterval(id);
   }, [serviceUrl]);
 
+  // Skill auto-suggest: listen for active tab URL changes from background
+  useEffect(() => {
+    const handler = (msg: { type: string; url: string }) => {
+      if (msg.type !== 'ACTIVE_TAB_CHANGED') return;
+      const url = msg.url ?? '';
+      const allSkills = [...skills, ...customSkills] as Skill[];
+      const curActive = useChatStore.getState().activeSkills;
+      const suggestion = allSkills.find(s =>
+        !curActive.includes(s.id) &&
+        !disabledSkillIds.includes(s.id) &&
+        s.targetUrls?.some(pattern => url.includes(pattern))
+      );
+      setSkillSuggestion(suggestion ?? null);
+    };
+    chrome.runtime.onMessage.addListener(handler);
+    return () => chrome.runtime.onMessage.removeListener(handler);
+  }, [skills, customSkills, disabledSkillIds]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -654,8 +676,17 @@ export default function ChatView({ onOpenSettings }: Props) {
           if (!trimmed) continue;
           const chunk = parseDataStreamChunk(trimmed);
           if (!chunk) continue;
-          if (chunk.type === 'text' && typeof chunk.data === 'string') {
+          if (chunk.type === 'data' && Array.isArray(chunk.data)) {
+            for (const part of chunk.data as Array<{ type: string; status: string }>) {
+              if (part?.type === 'status' && part.status === 'compressing') {
+                setIsCompressingContext(true);
+              } else if (part?.type === 'status' && part.status === 'compressed') {
+                setIsCompressingContext(false);
+              }
+            }
+          } else if (chunk.type === 'text' && typeof chunk.data === 'string') {
             setIsWaitingFirstChunk(false);
+            setIsCompressingContext(false);
             const last = segments[segments.length - 1];
             if (last?.type === 'text') {
               (last as { type: 'text'; content: string }).content += chunk.data;
@@ -720,6 +751,7 @@ export default function ChatView({ onOpenSettings }: Props) {
         return m;
       });
     } finally {
+      setIsCompressingContext(false);
       setLoading(false);
       setIsWaitingFirstChunk(false);
       abortRef.current = null;
@@ -899,7 +931,16 @@ export default function ChatView({ onOpenSettings }: Props) {
             : <AssistantMessage key={m.id} msg={m} serviceUrl={serviceUrl} />
         )}
 
-        {isWaitingFirstChunk && <SkeletonMessage />}
+        {isWaitingFirstChunk && (
+          isCompressingContext
+            ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 4px', color: 'var(--text-secondary)', fontSize: 13 }}>
+                <span style={{ animation: 'spin 1.2s linear infinite', display: 'inline-block' }}>🗜</span>
+                Đang nén context để tối ưu bộ nhớ…
+              </div>
+            )
+            : <SkeletonMessage />
+        )}
         {isLoading && !isWaitingFirstChunk && messages[messages.length - 1]?.role !== 'assistant' && <TypingDots />}
 
         {streamError && (
@@ -915,11 +956,39 @@ export default function ChatView({ onOpenSettings }: Props) {
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Skill auto-suggest banner */}
+      {skillSuggestion && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '6px 12px',
+          background: 'var(--bg-elevated)',
+          borderTop: '1px solid var(--border)',
+          fontSize: 12, color: 'var(--text-secondary)',
+        }}>
+          <span>💡</span>
+          <span style={{ flex: 1 }}>
+            Skill <strong>{skillSuggestion.icon} {skillSuggestion.name}</strong> phù hợp với trang này.
+          </span>
+          <button
+            onClick={() => { toggleSkill(skillSuggestion.id); setSkillSuggestion(null); }}
+            style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', background: 'var(--accent)', color: '#fff', border: 'none' }}
+          >
+            Bật
+          </button>
+          <button
+            onClick={() => setSkillSuggestion(null)}
+            style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, cursor: 'pointer', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Input */}
       <div style={{
         padding: '8px 12px 10px',
         background: 'var(--bg-elevated)',
-        borderTop: '1px solid var(--border)',
+        borderTop: skillSuggestion ? 'none' : '1px solid var(--border)',
       }}>
         {/* Toolbar */}
         <div style={{ display: 'flex', gap: 4, marginBottom: 6, alignItems: 'center' }}>
