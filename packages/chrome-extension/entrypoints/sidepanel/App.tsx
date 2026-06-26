@@ -59,6 +59,7 @@ function App() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [needLogin, setNeedLogin] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [missingPermissions, setMissingPermissions] = useState<{ permissions: string[]; origins: string[] } | null>(null);
 
   useEffect(() => { initApp(); }, []);
 
@@ -185,7 +186,21 @@ function App() {
     } else {
       setSetupMode(null);
     }
+    checkRequiredPermissions();
     setReady(true);
+  }
+
+  // Check which default-enabled tool permissions haven't been granted yet
+  async function checkRequiredPermissions() {
+    const [allUrlsGranted, notificationsGranted] = await Promise.all([
+      new Promise<boolean>(r => chrome.permissions.contains({ origins: ['<all_urls>'] }, r)),
+      new Promise<boolean>(r => chrome.permissions.contains({ permissions: ['notifications'] }, r)),
+    ]);
+    const origins = allUrlsGranted ? [] : ['<all_urls>'];
+    const permissions = notificationsGranted ? [] : ['notifications'];
+    if (origins.length || permissions.length) {
+      setMissingPermissions({ permissions, origins });
+    }
   }
 
   async function handleConnectionDone(newUrl: string, newToken: string, newHealth: HealthStatus) {
@@ -299,6 +314,35 @@ function App() {
           />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            {missingPermissions && (
+              <div style={{
+                padding: '8px 12px', background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)',
+                display: 'flex', alignItems: 'center', gap: 8, fontSize: 12,
+              }}>
+                <span style={{ flex: 1, color: 'var(--text-primary)' }}>
+                  Cấp quyền để agent tương tác với trang web
+                </span>
+                <button
+                  style={{
+                    padding: '4px 10px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                    background: 'var(--accent)', color: '#fff', fontSize: 12, fontWeight: 600,
+                  }}
+                  onClick={async () => {
+                    const granted = await new Promise<boolean>(r =>
+                      chrome.permissions.request(missingPermissions!, r)
+                    );
+                    if (granted) setMissingPermissions(null);
+                  }}
+                >
+                  Cho phép
+                </button>
+                <button
+                  style={{ padding: '4px 6px', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14 }}
+                  onClick={() => setMissingPermissions(null)}
+                  title="Bỏ qua"
+                >✕</button>
+              </div>
+            )}
             <ChatView onOpenSettings={() => chrome.tabs.create({ url: chrome.runtime.getURL('options.html') })} />
           </div>
         )}
