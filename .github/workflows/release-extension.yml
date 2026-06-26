@@ -40,7 +40,7 @@ jobs:
         working-directory: packages/chrome-extension
         env:
           IN_COMPILE: 'true'
-          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID || secrets.VITE_GOOGLE_CLIENT_ID }}
           DEV_MANIFEST_KEY: ${{ secrets.DEV_MANIFEST_KEY }}
         run: NODE_ENV=development pnpm zip
 

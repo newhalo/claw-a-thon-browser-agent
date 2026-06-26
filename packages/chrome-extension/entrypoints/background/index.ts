@@ -137,7 +137,60 @@ export default defineBackground({
       return !DEFAULT_DISABLED.has(toolName);
     };
 
+    // Map from tool category → Chrome optional permission required
+    const TOOL_PERMISSION_MAP: Record<string, string> = {
+      browser_search_bookmarks:    'bookmarks',
+      browser_get_bookmark_tree:   'bookmarks',
+      browser_create_bookmark:     'bookmarks',
+      browser_delete_bookmark:     'bookmarks',
+      browser_search_history:      'history',
+      browser_add_history:         'history',
+      browser_delete_history:      'history',
+      browser_get_top_sites:       'topSites',
+      browser_download:            'downloads',
+      browser_list_downloads:      'downloads',
+      browser_cancel_download:     'downloads',
+      browser_open_download:       'downloads',
+      browser_erase_download:      'downloads',
+      browser_get_recent_sessions: 'sessions',
+      browser_restore_session:     'sessions',
+      browser_get_cookies:         'cookies',
+      browser_set_cookie:          'cookies',
+      browser_delete_cookie:       'cookies',
+      browser_notify:              'notifications',
+    };
+
+    // Tools that require <all_urls> host permission to work on non-active tabs
+    const ALL_URLS_TOOLS = new Set([
+      'browser_click', 'browser_double_click', 'browser_right_click', 'browser_hover',
+      'browser_type', 'browser_select_option', 'browser_check_element', 'browser_scroll',
+      'browser_focus_element', 'browser_press_key', 'browser_set_attribute',
+      'browser_get_page_content', 'browser_get_page_metadata', 'browser_find_elements',
+      'browser_get_element_text', 'browser_get_links', 'browser_get_forms',
+      'browser_get_computed_style', 'browser_wait_for_element',
+      'browser_get_local_storage', 'browser_set_local_storage', 'browser_get_session_storage',
+      'browser_execute_script', 'browser_inject_css',
+      'browser_take_screenshot',
+    ]);
+
+    const requestPermissionForTool = (toolName: string): Promise<boolean> => {
+      const permission = TOOL_PERMISSION_MAP[toolName];
+      const needsAllUrls = ALL_URLS_TOOLS.has(toolName);
+
+      const permissions: string[] = permission ? [permission] : [];
+      const origins: string[] = needsAllUrls ? ['<all_urls>'] : [];
+
+      if (!permissions.length && !origins.length) return Promise.resolve(true);
+      return new Promise(resolve =>
+        chrome.permissions.request({ permissions, origins }, resolve)
+      );
+    };
+
     const setToolEnabled = async (toolName: string, enabled: boolean) => {
+      if (enabled) {
+        const granted = await requestPermissionForTool(toolName);
+        if (!granted) return; // User denied — don't enable the tool
+      }
       // If user sets the tool back to its default, remove the override to keep storage clean
       if (enabled === !DEFAULT_DISABLED.has(toolName)) toolSettings.delete(toolName);
       else toolSettings.set(toolName, enabled);
