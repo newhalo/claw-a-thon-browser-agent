@@ -268,8 +268,24 @@ export default defineBackground({
       });
     });
 
-    // Track active tab
-    chrome.tabs.onActivated.addListener((info) => { activeTabId = info.tabId; });
+    // Track active tab and notify sidepanel for skill auto-suggest
+    const notifyTabChanged = (url: string) => {
+      chrome.runtime.sendMessage({ type: 'ACTIVE_TAB_CHANGED', url }).catch(() => {});
+    };
+
+    chrome.tabs.onActivated.addListener((info) => {
+      activeTabId = info.tabId;
+      chrome.tabs.get(info.tabId, (tab) => {
+        if (tab?.url) notifyTabChanged(tab.url);
+      });
+    });
+
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+      if (tabId === activeTabId && changeInfo.status === 'complete' && tab.url) {
+        notifyTabChanged(tab.url);
+      }
+    });
+
     chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
       if (tabs[0]?.id) activeTabId = tabs[0].id;
     });

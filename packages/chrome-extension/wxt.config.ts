@@ -1,15 +1,22 @@
 import { defineConfig } from 'wxt';
 
 const isDev = process.env.NODE_ENV === 'development';
+const isInCompile = process.env.IN_COMPILE === 'true'
 
 export default defineConfig({
   outDir: 'dist',
   manifest: {
-    name: isDev ? 'Browser Agent [DEV]' : 'Browser Agent',
-    description: 'MCP extension connecting to Claw-a-thon native server',
-    version: '1.0.5',
+    name: isDev && !isInCompile ? 'Browser Agent [DEV]' : 'Browser Agent',
+    description: 'AI browser assistant powered by MCP — reads pages, fills forms, manages tabs & runs multi-step tasks with Claude, GPT-4, Gemini.',
+    version: '1.1.0',
     manifest_version: 3,
     minimum_chrome_version: '120',
+    // Pin extension ID for local dev so chrome.identity redirect URI is stable.
+    // Generated from .dev-key.pem — fixed ID: bgkjjnggooljgppjidjfibnpaacaffop
+    // On CI: injected via DEV_MANIFEST_KEY secret. Omitted for CWS production builds.
+    ...(isDev ? {
+      key: process.env.DEV_MANIFEST_KEY || 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArTQW2v4iYzX7IZ+G3iXck+GOdrlx0ul93L0tdjuPdIjorunqYNkcfqe8hioROmIDfElkvBokEqyeUjTRVsx6x/ggEmwtr65DDK3V0mJqkhNpVyoF5/DLAradP11nm317rhg8qw8QRnWnWQotYwsVe/0SGpavlLaFNwX2bkhCniblzV0b6v7S65/x76+898GP1jsfcaLwO7LQHuh2c3rt/DuN1tVkJjdotWzJbMSRJ3TMonuf0nMjG4L1JbTvb+xTOmC7MOViPWpXwxFi8qxt0qANDOQQOI8O0U8GUB/vXKqEa1GkgoWRjG5vGfu4PxUiN3+Ie+Zzrlp48iXJXtedlwIDAQAB',
+    } : {}),
     permissions: [
       'storage',
       'activeTab',
@@ -18,6 +25,7 @@ export default defineConfig({
       'webNavigation',
       'windows',
       'sidePanel',
+      'identity',
       'alarms',
       'bookmarks',
       'history',

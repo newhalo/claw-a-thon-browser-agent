@@ -32,14 +32,17 @@ export default function SetupView({ mode, agentServiceUrl, health, onConnectionD
 function ConnectionStep({ onDone }: { onDone: (url: string, token: string, health: HealthStatus) => void }) {
   const [url, setUrl] = useState(DEFAULT_AGENT_SERVICE_URL);
   const [token, setToken] = useState('');
+  const [hasJwt, setHasJwt] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // Pre-fill saved values
     chrome.storage.sync.get(['agentServiceUrl', 'agentToken'], (r) => {
       if (r.agentServiceUrl) setUrl(r.agentServiceUrl);
       if (r.agentToken) setToken(r.agentToken);
+    });
+    chrome.storage.local.get(['auth_jwt'], (r) => {
+      if (r.auth_jwt) setHasJwt(true);
     });
   }, []);
 
@@ -60,14 +63,14 @@ function ConnectionStep({ onDone }: { onDone: (url: string, token: string, healt
         return;
       }
 
-      if (h.authRequired && !token.trim()) {
-        setError('Server yêu cầu Auth Token. Nhập token để tiếp tục.');
+      if (h.authRequired && !token.trim() && !hasJwt) {
+        setError('Server yêu cầu xác thực. Đăng nhập Google hoặc nhập Auth Token.');
         setLoading(false);
         return;
       }
 
       if (h.authRequired && token.trim()) {
-        // Verify the token is actually valid by hitting a protected endpoint
+        // Verify the static token is actually valid
         const verifyRes = await fetch(`${trimmedUrl}/provider-config`, {
           headers: { 'Authorization': `Bearer ${token.trim()}` },
           signal: AbortSignal.timeout(3000),
@@ -117,18 +120,24 @@ function ConnectionStep({ onDone }: { onDone: (url: string, token: string, healt
         />
       </div>
 
-      <div>
-        <label style={labelStyle}>Auth Token <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(để trống nếu không cần)</span></label>
-        <input
-          type="password"
-          value={token}
-          onChange={e => setToken(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleConnect()}
-          placeholder="your-secret-token"
-          style={inputStyle}
-          autoComplete="off"
-        />
-      </div>
+      {hasJwt ? (
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '6px 10px', background: 'var(--surface-alt, var(--border))', borderRadius: 6 }}>
+          ✓ Đã đăng nhập — không cần Auth Token
+        </div>
+      ) : (
+        <div>
+          <label style={labelStyle}>Auth Token <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(để trống nếu không cần)</span></label>
+          <input
+            type="password"
+            value={token}
+            onChange={e => setToken(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleConnect()}
+            placeholder="your-secret-token"
+            style={inputStyle}
+            autoComplete="off"
+          />
+        </div>
+      )}
 
       {error && <ErrorBox message={error} />}
 
@@ -136,9 +145,11 @@ function ConnectionStep({ onDone }: { onDone: (url: string, token: string, healt
         {loading ? 'Đang kết nối…' : '→ Kết nối'}
       </button>
 
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.6 }}>
-        Token được lưu trong extension storage của trình duyệt.
-      </div>
+      {!hasJwt && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.6 }}>
+          Token được lưu trong extension storage của trình duyệt.
+        </div>
+      )}
     </SetupShell>
   );
 }

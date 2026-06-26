@@ -2,12 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { Settings } from 'lucide-react';
 import ChatView from './views/ChatView';
 import SetupView from './views/SetupView';
+import LoginView from './views/LoginView';
 import { AgentLogo, SunIcon, MoonIcon, SystemThemeIcon } from './components/Icons';
 import { useTheme, type Theme } from './lib/ThemeContext';
 import {
   getAgentServiceConfig,
+  saveAgentServiceConfig,
   checkAgentServiceHealthFull,
   setAgentToken,
+  setJwt,
   fetchNativeConfig,
   fetchProviderConfig,
   pushProviderConfig,
@@ -15,6 +18,7 @@ import {
   pushSystemPrompt,
   type HealthStatus,
 } from './lib/agentServiceClient';
+import { getStoredAuth, refreshJwt, logout, type AuthUser } from './lib/auth';
 import './App.css';
 
 const IS_DEV = import.meta.env.VITE_APP_ENV === 'development';
@@ -52,6 +56,9 @@ function App() {
   const [agentUrl, setAgentUrl] = useState('');
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [ready, setReady] = useState(false);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [needLogin, setNeedLogin] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   useEffect(() => { initApp(); }, []);
 
@@ -67,11 +74,37 @@ function App() {
     // Initialize module-level auth token for all API calls
     setAgentToken(cfg.token);
 
-    // Never auto-connect on fresh install — always require explicit setup
-    if (!hasExplicitUrl) {
+    // ── Auth: silent refresh or prompt login ──────────────────────────────────
+    const { jwt, refreshToken, user } = await getStoredAuth();
+    if (user) setAuthUser(user);
+    if (jwt) {
+      setJwt(jwt);
+    } else if (refreshToken) {
+      // JWT expired — try silent refresh
+      const newJwt = await refreshJwt(cfg.url);
+      if (newJwt) setJwt(newJwt);
+      else { setNeedLogin(true); setReady(true); return; }
+    } else if (!cfg.token) {
+      // No static token and no JWT — require login
+      setNeedLogin(true); setReady(true); return;
+    }
+    // Auth passed — update user state if not yet set
+    const hasGoogleAuth = !!(jwt || refreshToken);
+    if (!user) {
+      const { user: freshUser } = await getStoredAuth();
+      if (freshUser) setAuthUser(freshUser);
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+
+    // If no saved URL and not logged in via Google, require connection setup
+    if (!hasExplicitUrl && !hasGoogleAuth) {
       setSetupMode('connection');
       setReady(true);
       return;
+    }
+    // If logged in via Google but no saved URL, auto-save default URL and proceed
+    if (!hasExplicitUrl && hasGoogleAuth) {
+      await saveAgentServiceConfig({ url: cfg.url, token: cfg.token });
     }
 
     const h = await checkAgentServiceHealthFull(cfg.url);
@@ -84,9 +117,9 @@ function App() {
       return;
     }
 
-    // Service reachable — check if auth is valid
-    if (h.authRequired && !cfg.token) {
-      // Server requires auth but no token saved → connection setup
+    // Service reachable — check if auth is valid (JWT counts as authenticated)
+    const { jwt: currentJwt } = await getStoredAuth();
+    if (h.authRequired && !cfg.token && !currentJwt) {
       setSetupMode('connection');
       setReady(true);
       return;
@@ -187,6 +220,54 @@ function App() {
         </div>
         <nav className="app-nav">
           <ThemeToggle />
+          {authUser && (
+            <div style={{ position: 'relative' }}>
+              <button
+                className="nav-btn"
+                title={authUser.name}
+                onClick={() => setShowUserMenu(v => !v)}
+                style={{ padding: 2 }}
+              >
+                {authUser.avatarUrl
+                  ? <img src={authUser.avatarUrl} alt={authUser.name} style={{ width: 20, height: 20, borderRadius: '50%', display: 'block' }} />
+                  : <span style={{ fontSize: 13, fontWeight: 600 }}>{authUser.name[0]?.toUpperCase()}</span>
+                }
+              </button>
+              {showUserMenu && (
+                <>
+                  {/* backdrop to close menu */}
+                  <div style={{ position: 'fixed', inset: 0, zIndex: 99 }} onClick={() => setShowUserMenu(false)} />
+                  <div style={{
+                    position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 100,
+                    background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.2)', minWidth: 200, padding: '8px 0',
+                  }}>
+                    <div style={{ padding: '8px 14px 10px', borderBottom: '1px solid var(--border)' }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{authUser.name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{authUser.email}</div>
+                    </div>
+                    <button
+                      style={{
+                        width: '100%', textAlign: 'left', padding: '8px 14px', background: 'none',
+                        border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)',
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-hover)')}
+                      onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                      onClick={async () => {
+                        setShowUserMenu(false);
+                        if (!confirm(`Đăng xuất khỏi tài khoản ${authUser.email}?`)) return;
+                        await logout();
+                        setAuthUser(null);
+                        setNeedLogin(true);
+                      }}
+                    >
+                      Đăng xuất
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <button
             className="nav-btn"
             onClick={() => chrome.tabs.create({ url: chrome.runtime.getURL('options.html') })}
@@ -198,7 +279,17 @@ function App() {
       </header>
 
       <main className="app-content">
-        {setupMode ? (
+        {needLogin ? (
+          <LoginView
+            agentServiceUrl={agentUrl}
+            onLogin={user => {
+              setAuthUser(user);
+              setNeedLogin(false);
+              setReady(false);
+              initApp();
+            }}
+          />
+        ) : setupMode ? (
           <SetupView
             mode={setupMode}
             agentServiceUrl={agentUrl}

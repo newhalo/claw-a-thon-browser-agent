@@ -6,6 +6,7 @@ import chatRoute, { screenshotStore } from './routes/chat.js';
 import { getRecentMemories, deleteMemory, clearAllMemories, getMemoryStats, setMemoryConfig, getMemoryConfig, deduplicateMemories } from './memory/long-term.js';
 import { PREDEFINED_MODELS } from './models.js';
 import { getSkillsPublic } from './skills/registry.js';
+import { handleLogin, handleRefresh, handleLogout, handleMe, requireAuth } from './auth/index.js';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -106,16 +107,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // ── Auth middleware ──────────────────────────────────────────────────────────
-  if (VALID_TOKENS.length > 0) {
-    const authHeader = req.headers['authorization'] || '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    if (!VALID_TOKENS.includes(token)) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'unauthorized', message: 'Invalid or missing agent token' }));
-      return;
-    }
-  }
+  // ── Auth routes (public — no token required) ────────────────────────────────
+  if (url.pathname === '/auth/login'   && req.method === 'POST') { await handleLogin(req, res);   return; }
+  if (url.pathname === '/auth/refresh' && req.method === 'POST') { await handleRefresh(req, res); return; }
+  if (url.pathname === '/auth/logout'  && req.method === 'POST') { await handleLogout(req, res);  return; }
+
+  // ── Auth middleware — JWT or legacy static token ─────────────────────────────
+  if (!requireAuth(req, res, VALID_TOKENS)) return;
+
+  // ── Auth me ──────────────────────────────────────────────────────────────────
+  if (url.pathname === '/auth/me' && req.method === 'GET') { handleMe(req, res); return; }
 
   // ── Tools list ───────────────────────────────────────────────────────────
   if (url.pathname === '/tools' && req.method === 'GET') {

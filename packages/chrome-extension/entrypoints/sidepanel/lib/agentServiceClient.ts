@@ -7,11 +7,39 @@ export const DEFAULT_AGENT_SERVICE_URL =
   (import.meta as { env?: { VITE_DEFAULT_AGENT_URL?: string } }).env?.VITE_DEFAULT_AGENT_URL ||
   'http://localhost:3000';
 
-// Module-level token cache — set via initAgentAuth() on app startup
+// Module-level token cache.
+// Priority: JWT from auth module > legacy static agent token.
 let _agentToken = '';
+let _jwt = '';
 export function setAgentToken(token: string) { _agentToken = token; }
+export function setJwt(jwt: string)          { _jwt = jwt; }
 export function getAuthHeaders(): Record<string, string> {
-  return _agentToken ? { 'Authorization': `Bearer ${_agentToken}` } : {};
+  const token = _jwt || _agentToken;
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+}
+
+/**
+ * Fetch wrapper with automatic JWT refresh on 401.
+ * Falls back to returning the 401 response if refresh also fails.
+ */
+export async function fetchWithAuth(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = { ...(init.headers as Record<string, string> ?? {}), ...getAuthHeaders() };
+  const res = await fetch(url, { ...init, headers });
+
+  if (res.status !== 401) return res;
+
+  // Try silent refresh
+  try {
+    const { refreshJwt, getStoredAuth } = await import('./auth');
+    const serviceUrl = url.startsWith('http') ? new URL(url).origin : '';
+    const newJwt = await refreshJwt(serviceUrl);
+    if (!newJwt) return res; // refresh failed — caller will show login
+    setJwt(newJwt);
+    const retryHeaders = { ...(init.headers as Record<string, string> ?? {}), ...getAuthHeaders() };
+    return fetch(url, { ...init, headers: retryHeaders });
+  } catch {
+    return res;
+  }
 }
 
 export async function getAgentServiceConfig(): Promise<AgentServiceConfig> {
@@ -98,6 +126,7 @@ export interface Skill {
   description: string;
   icon: string;
   category: string;
+  targetUrls?: string[];
 }
 
 export interface CustomSkill {

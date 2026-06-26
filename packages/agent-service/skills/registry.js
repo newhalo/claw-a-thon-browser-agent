@@ -61,6 +61,7 @@ function loadSkills() {
         icon: meta.icon || '🔧',
         category: meta.category || 'general',
         systemPrompt: body,
+        targetUrls: meta.targetUrls ? meta.targetUrls.split(',').map(u => u.trim()).filter(Boolean) : [],
       });
     } catch (err) {
       console.warn(`[skills] Failed to load ${entry.name}/SKILL.md:`, err.message);
@@ -80,5 +81,5 @@ export function getSkillById(id) {
 
 /** Public catalog — name + description only, no instructions (progressive disclosure) */
 export function getSkillsPublic() {
-  return SKILLS.map(({ id, name, description, icon, category }) => ({ id, name, description, icon, category }));
+  return SKILLS.map(({ id, name, description, icon, category, targetUrls }) => ({ id, name, description, icon, category, targetUrls }));
 }
